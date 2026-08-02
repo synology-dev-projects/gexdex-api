@@ -119,7 +119,7 @@ jobs:
           chmod +x verify.sh
           ./verify.sh
 
-      # 8. MERGE LOGIC
+      # 8. MERGE LOGIC (DEVELOP ONLY)
       - name: Auto-Promote to Master
         if: github.ref_name == 'develop'
         run: |
@@ -129,13 +129,14 @@ jobs:
           git fetch origin
           git checkout master 2>/dev/null || git checkout -b master origin/master
           git pull origin master
-          git merge origin/develop --no-ff -m "Auto-merge develop to master [Skip CI]"
+          git merge origin/develop --no-ff -m "Auto-merge develop to master"
           git push origin master
 
-      # 9. DOCKER CONTAINER LAUNCH
-      - name: Build and Launch Docker Container
+      # 9. DOCKER CONTAINER LAUNCH (MASTER ONLY)
+      - name: Build and Launch Production Container
+        if: github.ref_name == 'master'
         run: |
-          echo "🐳 Launching Docker container on Synology NAS..."
+          echo "🐳 Launching Production Docker Container on Master branch..."
           cd "${{ env.DEPLOY_DIR }}"
           docker compose down || true
           docker compose up -d --build
