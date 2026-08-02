@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  gexdex-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gexdex-api-container
+    ports:
+      - "8090:8000"
+    environment:
+      - API_KEY=YOUR_SECRET_API_KEY_HERE
+    restart: always
