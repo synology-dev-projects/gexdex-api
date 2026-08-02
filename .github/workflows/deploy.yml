@@ -39,14 +39,34 @@ jobs:
           mkdir -p "$TARGET_PATH" "$COMMON_CONFIG_PATH"
           rm -rf "$TARGET_PATH"/*
 
-          echo "🚀 Copying latest project files & common_lib..."
+          echo "🚀 Copying latest project files..."
           cp -r main.py "$TARGET_PATH/"
           [ -d app ] && cp -r app "$TARGET_PATH/"
-          [ -d ../common-lib/common_lib ] && cp -r ../common-lib/common_lib "$TARGET_PATH/"
           cp -r Dockerfile "$TARGET_PATH/"
           cp -r docker-compose.yml "$TARGET_PATH/"
           [ -d tests ] && cp -r tests "$TARGET_PATH/"
           [ -f requirements.txt ] && cp requirements.txt "$TARGET_PATH/"
+
+          # Locate production master deployment of common-lib
+          MASTER_COMMON_LIB="${SYNOLOGY_ROOT_PATH}/master/common-lib/common_lib"
+          DEVELOP_COMMON_LIB="${SYNOLOGY_ROOT_PATH}/develop/common-lib/common_lib"
+
+          COMMON_LIB_SRC=""
+          if [ -d "$MASTER_COMMON_LIB" ]; then
+            COMMON_LIB_SRC="$MASTER_COMMON_LIB"
+          elif [ -d "$DEVELOP_COMMON_LIB" ]; then
+            COMMON_LIB_SRC="$DEVELOP_COMMON_LIB"
+          elif [ -d "../common-lib/common_lib" ]; then
+            COMMON_LIB_SRC="../common-lib/common_lib"
+          fi
+
+          if [ -n "$COMMON_LIB_SRC" ]; then
+            echo "📦 Copying common_lib from $COMMON_LIB_SRC..."
+            cp -r "$COMMON_LIB_SRC" "$TARGET_PATH/"
+          else
+            echo "❌ ERROR: common_lib master deployment not found at $MASTER_COMMON_LIB!"
+            exit 1
+          fi
 
           sudo chown -R 1026:100 "$TARGET_PATH"
           chmod -R 775 "$TARGET_PATH"
