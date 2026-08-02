@@ -126,8 +126,8 @@ jobs:
           echo "✅ Develop verified. Promoting to Master..."
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
-          git fetch origin develop
-          git checkout master
+          git fetch origin
+          git checkout master 2>/dev/null || git checkout -b master origin/master
           git pull origin master
           git merge origin/develop --no-ff -m "Auto-merge develop to master [Skip CI]"
           git push origin master
