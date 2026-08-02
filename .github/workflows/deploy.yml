@@ -49,7 +49,7 @@ jobs:
           echo "📂 Target Path: $TARGET_PATH"
           echo "DEPLOY_DIR=$TARGET_PATH" >> $GITHUB_ENV
           
-          echo "📂 Config Path: $COMMON_CONFIG_PATH"
+          echo "📂 Config Path: $CONFIG_DIR"
           echo "CONFIG_DIR=$COMMON_CONFIG_PATH" >> $GITHUB_ENV
 
       # 4. DEPLOY CODE
@@ -132,11 +132,13 @@ jobs:
           git merge origin/develop --no-ff -m "Auto-merge develop to master"
           git push origin master
 
-      # 9. DOCKER CONTAINER LAUNCH (MASTER ONLY)
+      # 9. DOCKER CONTAINER LAUNCH (LAUNCHES FROM MASTER WORKSPACE)
       - name: Build and Launch Production Container
-        if: github.ref_name == 'master'
         run: |
-          echo "🐳 Launching Production Docker Container on Master branch..."
-          cd "${{ env.DEPLOY_DIR }}"
+          echo "🐳 Launching Production Docker Container from Master Workspace..."
+          MASTER_PATH="${SYNOLOGY_ROOT_PATH}/master/${REPO_NAME}"
+          mkdir -p "$MASTER_PATH"
+          cp -r "${{ env.DEPLOY_DIR }}"/* "$MASTER_PATH/" 2>/dev/null || true
+          cd "$MASTER_PATH"
           docker compose down || true
           docker compose up -d --build
