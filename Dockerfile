@@ -1,6 +1,7 @@
 # --- STAGE 1: Base Image & Dependencies ---
 FROM python:3.13-slim AS base
 WORKDIR /app
+ENV PYTHONPATH=/app:$PYTHONPATH
 
 # 1. Copy dependencies first (Cached Docker Layer)
 COPY requirements.txt .
