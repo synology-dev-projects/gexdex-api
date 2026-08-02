@@ -64,6 +64,7 @@ jobs:
           echo "🚀 Copying new files..."
           cp -r main.py "$TARGET_PATH/"
           [ -d app ] && cp -r app "$TARGET_PATH/"
+          [ -d ../common-lib/common_lib ] && cp -r ../common-lib/common_lib "$TARGET_PATH/"
           cp -r Dockerfile "$TARGET_PATH/"
           cp -r docker-compose.yml "$TARGET_PATH/"
           [ -d tests ] && cp -r tests "$TARGET_PATH/"
