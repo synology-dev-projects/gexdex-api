@@ -7,14 +7,20 @@ from pydantic import BaseModel, Field
 import pandas as pd
 import numpy as np
 
-# Automatically add ../common-lib to sys.path if running in workspace
+# Automatically search for common-lib in candidate locations
 script_dir = os.path.dirname(os.path.abspath(__file__))
 app_dir = os.path.dirname(script_dir)
 root_dir = os.path.dirname(app_dir)
 parent_dir = os.path.dirname(root_dir)
-common_lib_path = os.path.join(parent_dir, "common-lib")
-if os.path.exists(common_lib_path) and common_lib_path not in sys.path:
-    sys.path.insert(0, common_lib_path)
+
+candidate_paths = [
+    os.path.join(parent_dir, "common-lib"),
+    os.path.join(root_dir, "common-lib"),
+    os.path.join(parent_dir, "common_lib"),
+]
+for path in candidate_paths:
+    if os.path.exists(path) and path not in sys.path:
+        sys.path.insert(0, path)
 
 # Import shared common-lib connectors & configuration
 try:
