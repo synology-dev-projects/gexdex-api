@@ -13,8 +13,12 @@ jobs:
     runs-on: self-hosted
 
     steps:
+      # 0. CHECKOUT LATEST REPO COMMIT
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       # 1. SETUP & CODE SYNC
-      - name: Checkout & Sync Workspace
+      - name: Sync Workspace & Bundle Dependencies
         run: |
           umask 002
           mkdir -p ../../conf
@@ -35,7 +39,7 @@ jobs:
           mkdir -p "$TARGET_PATH" "$COMMON_CONFIG_PATH"
           rm -rf "$TARGET_PATH"/*
 
-          echo "🚀 Copying project files & common_lib..."
+          echo "🚀 Copying latest project files & common_lib..."
           cp -r main.py "$TARGET_PATH/"
           [ -d app ] && cp -r app "$TARGET_PATH/"
           [ -d ../common-lib/common_lib ] && cp -r ../common-lib/common_lib "$TARGET_PATH/"
