@@ -131,3 +131,11 @@ jobs:
           git pull origin master
           git merge origin/develop --no-ff -m "Auto-merge develop to master [Skip CI]"
           git push origin master
+
+      # 9. DOCKER CONTAINER LAUNCH
+      - name: Build and Launch Docker Container
+        run: |
+          echo "🐳 Launching Docker container on Synology NAS..."
+          cd "${{ env.DEPLOY_DIR }}"
+          docker compose down || true
+          docker compose up -d --build
