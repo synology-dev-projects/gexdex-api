@@ -16,6 +16,9 @@ jobs:
       # 0. CHECKOUT LATEST REPO COMMIT
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
 
       # 1. SETUP & CODE SYNC
       - name: Sync Workspace & Bundle Dependencies
