@@ -12,5 +12,6 @@ services:
       - API_KEY=YOUR_SECRET_API_KEY_HERE
     volumes:
       - /volume2/homes/rachardv/git-repos/master/common-lib/common_lib:/app/common_lib
+      - /volume2/homes/rachardv/git-repos/master/common_config:/app/common_config
     restart: always
 
