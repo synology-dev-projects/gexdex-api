@@ -133,3 +133,44 @@ def get_gexdex_chart_png_direct(
     """
     img_bytes = render_gexdex_chart_image(ticker, max_dte=max_dte, strike_range=strike_range)
     return Response(content=img_bytes, media_type="image/png")
+
+
+@router.get(
+    "/assistant-summary",
+    summary="Get Options Exposure Summary & Chart Image Link for AI Assistants",
+    dependencies=[Depends(get_api_key)]
+)
+def get_gexdex_assistant_summary(
+    ticker: str = Query("AAPL", description="Stock ticker symbol (e.g. AAPL, TSLA, NVDA)"),
+    max_dte: int = Query(50, description="Maximum days to expiration (default: 50)"),
+    strike_range: int = Query(25, description="Strike range above/below spot price (default: 25)")
+):
+    """
+    Designed specifically for AI Assistants (Google Gemini, Custom GPTs).
+    Fetches real-time GEX/DEX options exposure metrics for a single ticker and returns a structured AI summary with direct image URLs.
+    """
+    clean_ticker = ticker.strip().upper()
+    data = get_gexdex_data([clean_ticker], max_dte=max_dte, strike_range=strike_range)
+    if clean_ticker not in data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No options exposure data found for ticker '{clean_ticker}'"
+        )
+    metrics = data[clean_ticker]
+    chart_png_url = f"/api/v1/gexdex/chart.png?ticker={clean_ticker}&max_dte={max_dte}&strike_range={strike_range}"
+    
+    return {
+        "ticker": metrics.ticker,
+        "spot_price": metrics.spot_price,
+        "net_gex": metrics.net_gex,
+        "net_dex": metrics.net_dex,
+        "zero_gex_level": metrics.zero_gex_level,
+        "call_wall": metrics.call_wall,
+        "put_wall": metrics.put_wall,
+        "call_put_ratio": metrics.call_put_ratio,
+        "key_gamma_strike": metrics.key_gamma_strike,
+        "chart_png_url": chart_png_url,
+        "markdown_image": f"![{clean_ticker} Options Chart]({chart_png_url})",
+        "updated_at": metrics.updated_at
+    }
+
