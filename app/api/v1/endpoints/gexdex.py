@@ -161,13 +161,11 @@ def get_gexdex_assistant_summary(
     
     return {
         "ticker": metrics.ticker,
-        "spot_price": metrics.spot_price,
         "net_gex": metrics.net_gex,
         "net_dex": metrics.net_dex,
         "zero_gex_level": metrics.zero_gex_level,
-        "call_wall": metrics.call_wall,
-        "put_wall": metrics.put_wall,
-        "call_put_ratio": metrics.call_put_ratio,
+        "call_gex": metrics.call_gex,
+        "put_gex": metrics.put_gex,
         "key_gamma_strike": metrics.key_gamma_strike,
         "chart_png_url": chart_png_url,
         "markdown_image": f"![{clean_ticker} Options Chart]({chart_png_url})",
