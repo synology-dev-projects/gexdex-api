@@ -51,11 +51,14 @@ jobs:
           [ -f requirements.txt ] && cp requirements.txt "$TARGET_PATH/"
 
           # Locate production master deployment of common-lib
+          HOMES_MASTER_COMMON_LIB="/volume2/homes/rachardv/git-repos/master/common-lib/common_lib"
           MASTER_COMMON_LIB="${SYNOLOGY_ROOT_PATH}/master/common-lib/common_lib"
           DEVELOP_COMMON_LIB="${SYNOLOGY_ROOT_PATH}/develop/common-lib/common_lib"
 
           COMMON_LIB_SRC=""
-          if [ -d "$MASTER_COMMON_LIB" ]; then
+          if [ -d "$HOMES_MASTER_COMMON_LIB" ]; then
+            COMMON_LIB_SRC="$HOMES_MASTER_COMMON_LIB"
+          elif [ -d "$MASTER_COMMON_LIB" ]; then
             COMMON_LIB_SRC="$MASTER_COMMON_LIB"
           elif [ -d "$DEVELOP_COMMON_LIB" ]; then
             COMMON_LIB_SRC="$DEVELOP_COMMON_LIB"
