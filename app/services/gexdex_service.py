@@ -43,11 +43,13 @@ except ImportError:
 
 class GexDexTickerMetrics(BaseModel):
     ticker: str = Field(..., description="Stock ticker symbol")
+    spot_price: float = Field(..., description="Current stock spot price ($)")
     net_gex: float = Field(..., description="Net Gamma Exposure ($)")
     net_dex: float = Field(..., description="Net Delta Exposure ($)")
     zero_gex_level: float = Field(..., description="Zero GEX Flip Level ($)")
     call_gex: float = Field(..., description="Total Call Gamma ($)")
     put_gex: float = Field(..., description="Total Put Gamma ($)")
+    call_put_ratio: float = Field(..., description="Call to Put Gamma Ratio")
     key_gamma_strike: float = Field(..., description="Major Gamma Strike Price ($)")
     updated_at: str = Field(..., description="ISO 8601 UTC timestamp of calculation")
 
@@ -60,7 +62,7 @@ def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTi
         return None
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    spot = float(raw_data.get("spot_price", 0.0) or 0.0)
+    spot = float(raw_data.get("spot_price", 0.0) or raw_data.get("spotPrice", 0.0) or 0.0)
     gex_wall = raw_data.get("gex_wall")
 
     call_gex, put_gex, call_dex, put_dex = 0.0, 0.0, 0.0, 0.0
@@ -83,14 +85,17 @@ def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTi
     net_dex = call_dex - put_dex
     key_gamma_strike = float(gex_wall) if gex_wall is not None else spot
     zero_gex_level = spot if spot > 0 else key_gamma_strike
+    call_put_ratio = round(abs(call_gex / put_gex), 2) if put_gex != 0 else 1.0
 
     return GexDexTickerMetrics(
         ticker=ticker,
+        spot_price=round(spot, 2),
         net_gex=round(net_gex, 2),
         net_dex=round(net_dex, 2),
         zero_gex_level=round(zero_gex_level, 2),
         call_gex=round(call_gex, 2),
         put_gex=round(put_gex, 2),
+        call_put_ratio=call_put_ratio,
         key_gamma_strike=round(key_gamma_strike, 2),
         updated_at=now_iso
     )
