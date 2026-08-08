@@ -13,132 +13,98 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      # 1. CLEANUP
-      - name: Clean Runner Workspace
-        run: |
-          echo "🧹 Cleaning previous runner artifacts..."
-          rm -rf ./*
-          rm -rf ./.??*
-
-      # 2. CHECKOUT
-      - name: Checkout Code
+      # 0. CHECKOUT LATEST REPO COMMIT
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. SETUP VARIABLES
-      - name: Configure Deployment Paths and Common Config
+
+      # 1. SETUP & CODE SYNC
+      - name: Sync Workspace & Bundle Dependencies
         run: |
           umask 002
           mkdir -p ../../conf
           if [ ! -f ../../conf/syno_paths.env ]; then
             echo "SYNOLOGY_ROOT_PATH=/volume2/docker" > ../../conf/syno_paths.env
           fi
-
-          cat ../../conf/syno_paths.env >> $GITHUB_ENV
           source ../../conf/syno_paths.env
 
           BRANCH_NAME="${{ github.ref_name }}"
           REPO_NAME="${{ github.event.repository.name }}"
-          
           TARGET_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/${REPO_NAME}"
           COMMON_CONFIG_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/common_config"
-          mkdir -p "$COMMON_CONFIG_PATH"
-          
+
           echo "📂 Target Path: $TARGET_PATH"
           echo "DEPLOY_DIR=$TARGET_PATH" >> $GITHUB_ENV
-          
-          echo "📂 Config Path: $CONFIG_DIR"
           echo "CONFIG_DIR=$COMMON_CONFIG_PATH" >> $GITHUB_ENV
 
-      # 4. DEPLOY CODE
-      - name: Sync Code to Project Root
-        run: |
-          TARGET_PATH="${{ env.DEPLOY_DIR }}"
-          mkdir -p "$TARGET_PATH"
-
-          echo "🧹 Wiping old files (preserves .venv)..."
+          mkdir -p "$TARGET_PATH" "$COMMON_CONFIG_PATH"
           rm -rf "$TARGET_PATH"/*
 
-          echo "🚀 Copying new files..."
+          echo "🚀 Copying latest project files..."
           cp -r main.py "$TARGET_PATH/"
           [ -d app ] && cp -r app "$TARGET_PATH/"
           cp -r Dockerfile "$TARGET_PATH/"
           cp -r docker-compose.yml "$TARGET_PATH/"
           [ -d tests ] && cp -r tests "$TARGET_PATH/"
-          [ -f verify.sh ] && cp verify.sh "$TARGET_PATH/"
           [ -f requirements.txt ] && cp requirements.txt "$TARGET_PATH/"
+
+          # Locate production master deployment of common-lib
+          MASTER_COMMON_LIB="${SYNOLOGY_ROOT_PATH}/master/common-lib/common_lib"
+          DEVELOP_COMMON_LIB="${SYNOLOGY_ROOT_PATH}/develop/common-lib/common_lib"
+
+          COMMON_LIB_SRC=""
+          if [ -d "$MASTER_COMMON_LIB" ]; then
+            COMMON_LIB_SRC="$MASTER_COMMON_LIB"
+          elif [ -d "$DEVELOP_COMMON_LIB" ]; then
+            COMMON_LIB_SRC="$DEVELOP_COMMON_LIB"
+          elif [ -d "../common-lib/common_lib" ]; then
+            COMMON_LIB_SRC="../common-lib/common_lib"
+          fi
+
+          if [ -n "$COMMON_LIB_SRC" ]; then
+            echo "📦 Copying common_lib from $COMMON_LIB_SRC..."
+            rm -rf "$TARGET_PATH/common_lib"
+            cp -r "$COMMON_LIB_SRC" "$TARGET_PATH/common_lib"
+          else
+            echo "❌ ERROR: common_lib master deployment not found at $MASTER_COMMON_LIB!"
+            exit 1
+          fi
 
           sudo chown -R 1026:100 "$TARGET_PATH"
           chmod -R 775 "$TARGET_PATH"
 
-      # 4.5 SETUP PYTHON
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-
-      # 5. MANAGE VENV
-      - name: Update Project Virtualenv
-        run: |
-          cd "${{ env.DEPLOY_DIR }}"
-          
-          if [ ! -d ".venv" ] || ! .venv/bin/python -c "import sys; exit(0 if sys.version_info >= (3, 12) else 1)" 2>/dev/null; then
-            echo "🔨 Creating new Python 3.13 virtual environment..."
-            rm -rf .venv
-            python3 -m venv .venv
-          else
-            echo "✅ Existing .venv found. Updating..."
-          fi
-          
-          source .venv/bin/activate
-          pip install --upgrade pip
-          
-          echo "📦 Installing dependencies..."
-          pip install -r requirements.txt            
-          
-          echo "$PWD/.venv/bin" >> $GITHUB_PATH
-
-      # 6. SECRET INJECTION
-      - name: Create Runtime .env File
-        run: |
-          ENV_FILE="${{ env.CONFIG_DIR }}/.env"
-          echo "Generating secure .env file at $ENV_FILE..."
-          
-          echo "API_KEY=${{ secrets.API_KEY || 'YOUR_SECRET_API_KEY_HERE' }}" >> "$ENV_FILE"
+          ENV_FILE="${COMMON_CONFIG_PATH}/.env"
+          echo "API_KEY=${{ secrets.API_KEY || 'YOUR_SECRET_API_KEY_HERE' }}" > "$ENV_FILE"
           chmod 644 "$ENV_FILE"
 
-      # 7. VERIFICATION
-      - name: Run Verification
+      # 2. DOCKER-NATIVE ISOLATED UNIT TESTING
+      - name: Run Docker Unit Tests
         run: |
-          echo "🧪 Testing branch: ${{ github.ref_name }}"
+          echo "🧪 Running unit tests in isolated Docker container..."
           cd "${{ env.DEPLOY_DIR }}"
-          
-          export PATH="$(pwd)/.venv/bin:$PATH"
-          chmod +x verify.sh
-          ./verify.sh
+          docker build --target test -t gexdex-api:test .
 
-      # 8. MERGE LOGIC (DEVELOP ONLY)
-      - name: Auto-Promote to Master
-        if: github.ref_name == 'develop'
+      # 3. AUTO-PROMOTE & PRODUCTION CONTAINER LAUNCH
+      - name: Auto-Promote to Master & Launch Container
         run: |
-          echo "✅ Develop verified. Promoting to Master..."
-          git config user.name "GitHub Actions Bot"
-          git config user.email "actions@github.com"
-          git fetch origin
-          git checkout master 2>/dev/null || git checkout -b master origin/master
-          git pull origin master
-          git merge origin/develop --no-ff -m "Auto-merge develop to master"
-          git push origin master
+          if [ "${{ github.ref_name }}" = "develop" ]; then
+            echo "✅ Develop verified. Auto-promoting to Master..."
+            git config user.name "GitHub Actions Bot"
+            git config user.email "actions@github.com"
+            git fetch origin
+            git checkout master 2>/dev/null || git checkout -b master origin/master
+            git pull origin master
+            git merge origin/develop --no-ff -m "Auto-merge develop to master"
+            git push origin master
+          fi
 
-      # 9. DOCKER CONTAINER LAUNCH (LAUNCHES FROM MASTER WORKSPACE)
-      - name: Build and Launch Production Container
-        run: |
-          echo "🐳 Launching Production Docker Container from Master Workspace..."
+          echo "🐳 Launching Production Docker Container on Master..."
           MASTER_PATH="${SYNOLOGY_ROOT_PATH}/master/${REPO_NAME}"
           mkdir -p "$MASTER_PATH"
           cp -r "${{ env.DEPLOY_DIR }}"/* "$MASTER_PATH/" 2>/dev/null || true
+          
           cd "$MASTER_PATH"
           docker compose down || true
           docker compose up -d --build

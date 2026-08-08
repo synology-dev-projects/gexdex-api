@@ -14,8 +14,10 @@ root_dir = os.path.dirname(app_dir)
 parent_dir = os.path.dirname(root_dir)
 
 candidate_paths = [
-    os.path.join(parent_dir, "common-lib"),
+    root_dir,
+    os.path.join(root_dir, "common_lib"),
     os.path.join(root_dir, "common-lib"),
+    os.path.join(parent_dir, "common-lib"),
     os.path.join(parent_dir, "common_lib"),
 ]
 for path in candidate_paths:
