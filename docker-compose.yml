@@ -10,4 +10,7 @@ services:
       - "8090:8000"
     environment:
       - API_KEY=YOUR_SECRET_API_KEY_HERE
+    volumes:
+      - ../common-lib/common_lib:/app/common_lib
     restart: always
+

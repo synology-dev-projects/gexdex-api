@@ -62,7 +62,8 @@ jobs:
 
           if [ -n "$COMMON_LIB_SRC" ]; then
             echo "📦 Copying common_lib from $COMMON_LIB_SRC..."
-            cp -r "$COMMON_LIB_SRC" "$TARGET_PATH/"
+            rm -rf "$TARGET_PATH/common_lib"
+            cp -r "$COMMON_LIB_SRC" "$TARGET_PATH/common_lib"
           else
             echo "❌ ERROR: common_lib master deployment not found at $MASTER_COMMON_LIB!"
             exit 1
