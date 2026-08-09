@@ -30,8 +30,6 @@ jobs:
           fi
           source ../../conf/syno_paths.env
 
-          # Ensure SYNOLOGY_ROOT_PATH points to real git-repos folder without trailing slash
-          [ "$SYNOLOGY_ROOT_PATH" = "/volume2/docker" ] && SYNOLOGY_ROOT_PATH="/volume2/homes/rachardv/git-repos"
           SYNOLOGY_ROOT_PATH="${SYNOLOGY_ROOT_PATH%/}"
 
           BRANCH_NAME="${{ github.ref_name }}"
@@ -39,11 +37,11 @@ jobs:
           TARGET_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/${REPO_NAME}"
 
           # Master common-lib & common_config host locations
-          COMMON_LIB_HOST_PATH="/volume2/docker/${BRANCH_NAME}/common-lib/common_lib"
-          [ ! -d "$COMMON_LIB_HOST_PATH" ] && COMMON_LIB_HOST_PATH="/volume2/docker/master/common-lib/common_lib"
+          COMMON_LIB_HOST_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/common-lib/common_lib"
+          [ ! -d "$COMMON_LIB_HOST_PATH" ] && COMMON_LIB_HOST_PATH="${SYNOLOGY_ROOT_PATH}/master/common-lib/common_lib"
 
-          COMMON_CONFIG_HOST_PATH="/volume2/docker/${BRANCH_NAME}/common_config"
-          [ ! -d "$COMMON_CONFIG_HOST_PATH" ] && COMMON_CONFIG_HOST_PATH="/volume2/docker/master/common_config"
+          COMMON_CONFIG_HOST_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/common_config"
+          [ ! -d "$COMMON_CONFIG_HOST_PATH" ] && COMMON_CONFIG_HOST_PATH="${SYNOLOGY_ROOT_PATH}/master/common_config"
 
           echo "📂 Target Path: $TARGET_PATH"
           echo "DEPLOY_DIR=$TARGET_PATH" >> $GITHUB_ENV
