@@ -12,7 +12,6 @@ from app.services.gexdex_service import (
 client = TestClient(app)
 TEST_API_KEY = "YOUR_SECRET_API_KEY_HERE"
 
-# Sample raw payload mimicking TradingEdge API option chain response
 MOCK_RAW_PAYLOAD = {
     "ticker": "AAPL",
     "spot_price": 225.50,
@@ -51,6 +50,12 @@ MOCK_RAW_PAYLOAD = {
         "put_gex": [500, 100]
     }
 }
+
+
+@pytest.fixture(autouse=True)
+def mock_fetch_raw_data():
+    with patch("app.services.gexdex_service.fetch_raw_data_for_ticker", return_value=MOCK_RAW_PAYLOAD):
+        yield
 
 
 def test_health_check():
@@ -168,18 +173,14 @@ def test_calculate_metrics_from_raw():
     assert metrics.key_gamma_strike == 230.0
 
 
-@patch("app.services.gexdex_service.load_config")
-@patch("app.services.gexdex_service.get_authenticated_session")
-@patch("app.services.gexdex_service.extract_raw_data")
-def test_get_gexdex_data_with_mocked_common_lib(mock_extract, mock_session, mock_config):
-    """Tests get_gexdex_data integration with mocked common-lib TradingEdge authentication."""
-    mock_config.return_value = MagicMock()
-    mock_session.return_value = MagicMock()
-    mock_extract.return_value = MOCK_RAW_PAYLOAD
+@patch("app.services.gexdex_service.fetch_raw_data_for_ticker")
+def test_get_gexdex_data_with_mocked_common_lib(mock_fetch):
+    """Tests get_gexdex_data integration with mocked fetch_raw_data_for_ticker."""
+    mock_fetch.return_value = MOCK_RAW_PAYLOAD
 
     result = get_gexdex_data(["AAPL"])
     assert "AAPL" in result
     assert result["AAPL"].net_gex == 300000.0
     assert result["AAPL"].key_gamma_strike == 230.0
-    mock_extract.assert_called_once()
+    mock_fetch.assert_called_once()
 

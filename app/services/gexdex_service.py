@@ -151,11 +151,13 @@ def get_gexdex_data(
         is_aapl = (symbol == "AAPL")
         results[symbol] = GexDexTickerMetrics(
             ticker=symbol,
+            spot_price=225.50 if is_aapl else 215.00,
             net_gex=1250000.50 if is_aapl else -450000.25,
             net_dex=850200.00 if is_aapl else 1200300.75,
             zero_gex_level=225.50 if is_aapl else 215.00,
             call_gex=3400000.00,
             put_gex=2149999.50,
+            call_put_ratio=1.58,
             key_gamma_strike=230.00 if is_aapl else 220.00,
             updated_at=now_iso
         )
