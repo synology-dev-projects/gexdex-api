@@ -145,3 +145,16 @@ jobs:
           docker compose down || true
           docker compose build --no-cache
           docker compose up -d --force-recreate
+
+      # 5. AUTO-PROMOTE DEVELOP TO MASTER (ONLY AFTER DEVELOP INTEGRATION TESTS PASS)
+      - name: Auto-Promote Verified Develop to Master
+        if: github.ref_name == 'develop'
+        run: |
+          echo "✅ Develop integration tests verified. Auto-promoting to Master..."
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          git fetch origin develop
+          git checkout master 2>/dev/null || git checkout -b master origin/master
+          git pull origin master
+          git merge origin/develop --no-ff -m "Auto-merge develop to master"
+          git push origin master
