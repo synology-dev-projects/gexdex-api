@@ -23,15 +23,7 @@ jobs:
       # 1. SETUP & CODE SYNC
       - name: Sync Workspace & Configure Paths
         run: |
-          umask 002
-          mkdir -p ../../conf
-          if [ ! -f ../../conf/syno_paths.env ]; then
-            echo "SYNOLOGY_ROOT_PATH=/volume2/homes/rachardv/git-repos" > ../../conf/syno_paths.env
-          fi
-          source ../../conf/syno_paths.env
-
-          # Ensure SYNOLOGY_ROOT_PATH points to real git-repos folder without trailing slash
-          [ "$SYNOLOGY_ROOT_PATH" = "/volume2/docker" ] && SYNOLOGY_ROOT_PATH="/volume2/homes/rachardv/git-repos"
+          SYNOLOGY_ROOT_PATH="/volume2/homes/rachardv/git-repos"
           SYNOLOGY_ROOT_PATH="${SYNOLOGY_ROOT_PATH%/}"
 
           BRANCH_NAME="${{ github.ref_name }}"
