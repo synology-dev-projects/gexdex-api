@@ -104,11 +104,13 @@ def test_gexdex_non_null_fields_validation():
         assert metrics is not None, f"Metrics object for {ticker_symbol} is null"
         
         assert metrics.get("ticker") is not None and isinstance(metrics["ticker"], str) and len(metrics["ticker"]) > 0
+        assert metrics.get("spot_price") is not None and isinstance(metrics["spot_price"], (int, float))
         assert metrics.get("net_gex") is not None and isinstance(metrics["net_gex"], (int, float))
         assert metrics.get("net_dex") is not None and isinstance(metrics["net_dex"], (int, float))
         assert metrics.get("zero_gex_level") is not None and isinstance(metrics["zero_gex_level"], (int, float))
         assert metrics.get("call_gex") is not None and isinstance(metrics["call_gex"], (int, float))
         assert metrics.get("put_gex") is not None and isinstance(metrics["put_gex"], (int, float))
+        assert metrics.get("call_put_ratio") is not None and isinstance(metrics["call_put_ratio"], (int, float))
         assert metrics.get("key_gamma_strike") is not None and isinstance(metrics["key_gamma_strike"], (int, float))
         assert metrics.get("updated_at") is not None and isinstance(metrics["updated_at"], str) and len(metrics["updated_at"]) > 0
 
@@ -136,13 +138,31 @@ def test_chart_png_direct_rendering():
     assert len(response.content) > 1000  # PNG image binary output
 
 
+def test_assistant_summary_endpoint():
+    """Verifies HTTP GET /api/v1/gexdex/assistant-summary returns structured JSON with spot_price, call_put_ratio, and chart image markdown tag."""
+    response = client.get(
+        "/api/v1/gexdex/assistant-summary?ticker=AAPL",
+        headers={"X-API-Key": TEST_API_KEY}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ticker"] == "AAPL"
+    assert "spot_price" in data
+    assert "call_put_ratio" in data
+    assert "chart_png_url" in data
+    assert "markdown_image" in data
+    assert "![AAPL Options Chart]" in data["markdown_image"]
+
+
 def test_calculate_metrics_from_raw():
     """Tests option chain processing math (net GEX, net DEX, zero GEX level)."""
     metrics = calculate_metrics_from_raw("AAPL", MOCK_RAW_PAYLOAD)
     assert metrics is not None
     assert metrics.ticker == "AAPL"
+    assert metrics.spot_price == 225.50
     assert metrics.call_gex == 900000.0
     assert metrics.put_gex == 600000.0
+    assert metrics.call_put_ratio == 1.5
     assert metrics.net_gex == 300000.0
     assert metrics.net_dex == 650000.0
     assert metrics.key_gamma_strike == 230.0
@@ -162,3 +182,4 @@ def test_get_gexdex_data_with_mocked_common_lib(mock_extract, mock_session, mock
     assert result["AAPL"].net_gex == 300000.0
     assert result["AAPL"].key_gamma_strike == 230.0
     mock_extract.assert_called_once()
+
