@@ -107,7 +107,7 @@ jobs:
           MASTER_PATH="${SYNOLOGY_ROOT_PATH}/master/${REPO_NAME}"
           mkdir -p "$MASTER_PATH"
           rm -rf "$MASTER_PATH"/*
-          cp -r "${{ env.DEPLOY_DIR }}"/* "$MASTER_PATH/" 2>/dev/null || true
+          cp -r ./* "$MASTER_PATH/" 2>/dev/null || true
           
           cd "$MASTER_PATH"
           docker compose down || true
