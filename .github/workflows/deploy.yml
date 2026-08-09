@@ -71,80 +71,67 @@ jobs:
           cd "${{ env.DEPLOY_DIR }}"
           docker build --target test -t gexdex-api:test .
 
-      # 3. DEVELOP BRANCH: EPHEMERAL STAGING CONTAINER & LIVE API TESTING
-      - name: Spin Up Ephemeral Staging Container (Port 8091)
-        if: github.ref_name == 'develop'
+      # 3. CONFIGURE DYNAMIC PORTS & DEPLOYMENT
+      - name: Configure Port & Environment
+        run: |
+          if [ "${{ github.ref_name }}" == "develop" ]; then
+            echo "PORT=8091" >> $GITHUB_ENV
+            echo "CONTAINER_NAME=gexdex-api-dev" >> $GITHUB_ENV
+            echo "🚀 Target Environment: STAGING (Ephemeral)"
+          else
+            echo "PORT=8090" >> $GITHUB_ENV
+            echo "CONTAINER_NAME=gexdex-api-prod" >> $GITHUB_ENV
+            echo "🐳 Target Environment: PRODUCTION (24/7)"
+          fi
+          echo "COMMON_LIB_PATH=${{ env.COMMON_LIB_HOST_PATH }}" >> $GITHUB_ENV
+          echo "COMMON_CONFIG_PATH=${{ env.COMMON_CONFIG_HOST_PATH }}" >> $GITHUB_ENV
+
+      # 4. SPIN UP CONTAINER (Master & Develop)
+      - name: Spin Up Docker Container
         run: |
           cd "${{ env.DEPLOY_DIR }}"
-          echo "🚀 Spinning up ephemeral staging container on port 8091..."
-          export CONTAINER_NAME=gexdex-api-dev
-          export PORT=8091
-          export COMMON_LIB_PATH="${{ env.COMMON_LIB_HOST_PATH }}"
-          export COMMON_CONFIG_PATH="${{ env.COMMON_CONFIG_HOST_PATH }}"
-
+          echo "🚀 Spinning up container ${CONTAINER_NAME} on port ${PORT}..."
+          
           docker compose down || true
           docker compose build
           docker compose up -d --force-recreate
           sleep 5
 
-      - name: Run Live HTTP Integration Endpoint Tests (Port 8091)
-        if: github.ref_name == 'develop'
+      # 5. RUN LIVE HTTP ENDPOINT TESTS (Master & Develop)
+      - name: Run Live HTTP Integration Endpoint Tests
         run: |
-          echo "📡 Testing Live HTTP Endpoints on Ephemeral Container (Port 8091)..."
+          echo "📡 Testing Live HTTP Endpoints on Port ${{ env.PORT }}..."
+          
+          # Determine reachable host IP (for containerized runner)
+          HOST_IP="127.0.0.1"
+          for candidate in "127.0.0.1" "172.17.0.1" "192.168.1.68"; do
+            if curl -s --connect-timeout 2 "http://${candidate}:${{ env.PORT }}/health" >/dev/null 2>&1; then
+              HOST_IP="$candidate"
+              break
+            fi
+          done
+          echo "🌐 Testing against host IP: $HOST_IP"
           
           # Health check
-          curl -f http://127.0.0.1:8091/health || (echo "❌ Health check failed" && exit 1)
+          curl -f "http://${HOST_IP}:${{ env.PORT }}/health" || (echo "❌ Health check failed" && exit 1)
           
           # Assistant summary endpoint
-          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://127.0.0.1:8091/api/v1/gexdex/assistant-summary?ticker=AAPL" || (echo "❌ Assistant summary endpoint failed" && exit 1)
+          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:${{ env.PORT }}/api/v1/gexdex/assistant-summary?ticker=AAPL" || (echo "❌ Assistant summary endpoint failed" && exit 1)
           
           # Chart image PNG endpoint
-          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://127.0.0.1:8091/api/v1/gexdex/chart.png?ticker=AAPL" -o /dev/null || (echo "❌ Chart PNG endpoint failed" && exit 1)
+          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:${{ env.PORT }}/api/v1/gexdex/chart.png?ticker=AAPL" -o /dev/null || (echo "❌ Chart PNG endpoint failed" && exit 1)
 
-          echo "✅ All live HTTP integration endpoint tests passed on port 8091!"
+          echo "✅ All live HTTP integration endpoint tests passed on port ${{ env.PORT }}!"
 
+      # 6. CLEANUP (Only on Develop)
       - name: Tear Down Ephemeral Staging Container
         if: always() && github.ref_name == 'develop'
         run: |
           cd "${{ env.DEPLOY_DIR }}"
-          echo "🧹 Cleaning up ephemeral staging container on port 8091..."
-          export CONTAINER_NAME=gexdex-api-dev
-          export PORT=8091
+          echo "🧹 Cleaning up ephemeral staging container on port ${{ env.PORT }}..."
           docker compose down || true
 
-      # 4. MASTER BRANCH: PRODUCTION CONTAINER DEPLOYMENT (Port 8090)
-      - name: Launch 24/7 Production Container on Master (Port 8090)
-        if: github.ref_name == 'master'
-        run: |
-          cd "${{ env.DEPLOY_DIR }}"
-          echo "🐳 Launching 24/7 Production Docker Container on Master (Port 8090)..."
-          export CONTAINER_NAME=gexdex-api-container
-          export PORT=8090
-          export COMMON_LIB_PATH="${{ env.COMMON_LIB_HOST_PATH }}"
-          export COMMON_CONFIG_PATH="${{ env.COMMON_CONFIG_HOST_PATH }}"
-
-          docker compose down || true
-          docker compose build
-          docker compose up -d --force-recreate
-          sleep 5
-
-      - name: Run Live Production HTTP Integration Endpoint Tests (Port 8090)
-        if: github.ref_name == 'master'
-        run: |
-          echo "📡 Testing Live Production HTTP Endpoints on Port 8090..."
-          
-          # Health check
-          curl -f http://127.0.0.1:8090/health || (echo "❌ Production Health check failed" && exit 1)
-          
-          # Assistant summary endpoint
-          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://127.0.0.1:8090/api/v1/gexdex/assistant-summary?ticker=AAPL" || (echo "❌ Production Assistant summary endpoint failed" && exit 1)
-          
-          # Chart image PNG endpoint
-          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://127.0.0.1:8090/api/v1/gexdex/chart.png?ticker=AAPL" -o /dev/null || (echo "❌ Production Chart PNG endpoint failed" && exit 1)
-
-          echo "✅ All live production HTTP integration endpoint tests passed on port 8090!"
-
-      # 5. AUTO-PROMOTE DEVELOP TO MASTER (ONLY AFTER DEVELOP INTEGRATION TESTS PASS)
+      # 7. AUTO-PROMOTE DEVELOP TO MASTER (Only on Develop)
       - name: Auto-Promote Verified Develop to Master
         if: github.ref_name == 'develop'
         run: |
