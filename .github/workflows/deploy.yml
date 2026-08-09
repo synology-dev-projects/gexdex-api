@@ -29,8 +29,9 @@ jobs:
           fi
           source ../../conf/syno_paths.env
 
-          # Ensure SYNOLOGY_ROOT_PATH points to real git-repos folder
+          # Ensure SYNOLOGY_ROOT_PATH points to real git-repos folder without trailing slash
           [ "$SYNOLOGY_ROOT_PATH" = "/volume2/docker" ] && SYNOLOGY_ROOT_PATH="/volume2/homes/rachardv/git-repos"
+          SYNOLOGY_ROOT_PATH="${SYNOLOGY_ROOT_PATH%/}"
 
           BRANCH_NAME="${{ github.ref_name }}"
           REPO_NAME="${{ github.event.repository.name }}"
@@ -48,8 +49,9 @@ jobs:
           echo "COMMON_LIB_HOST_PATH=$COMMON_LIB_HOST_PATH" >> $GITHUB_ENV
           echo "COMMON_CONFIG_HOST_PATH=$COMMON_CONFIG_HOST_PATH" >> $GITHUB_ENV
 
-          mkdir -p "$TARGET_PATH"
-          rm -rf "$TARGET_PATH"/*
+          sudo mkdir -p "$TARGET_PATH"
+          sudo chown -R 1026:100 "$TARGET_PATH" 2>/dev/null || sudo chown -R rachardv:users "$TARGET_PATH"
+          sudo rm -rf "$TARGET_PATH"/*
 
           echo "🚀 Copying latest project files..."
           cp -r main.py "$TARGET_PATH/"
@@ -59,7 +61,7 @@ jobs:
           cp -r tests "$TARGET_PATH/"
           cp requirements.txt "$TARGET_PATH/"
 
-          sudo chown -R 1026:100 "$TARGET_PATH"
+          sudo chown -R 1026:100 "$TARGET_PATH" 2>/dev/null || sudo chown -R rachardv:users "$TARGET_PATH"
           chmod -R 775 "$TARGET_PATH"
 
       # 2. DOCKER ISOLATED UNIT TESTING
@@ -77,7 +79,6 @@ jobs:
           echo "🚀 Spinning up ephemeral staging container on port 8091..."
           export CONTAINER_NAME=gexdex-api-dev
           export PORT=8091
-          export APP_PATH="${{ env.DEPLOY_DIR }}/app"
           export COMMON_LIB_PATH="${{ env.COMMON_LIB_HOST_PATH }}"
           export COMMON_CONFIG_PATH="${{ env.COMMON_CONFIG_HOST_PATH }}"
 
@@ -119,7 +120,6 @@ jobs:
           echo "🐳 Launching 24/7 Production Docker Container on Master (Port 8090)..."
           export CONTAINER_NAME=gexdex-api-container
           export PORT=8090
-          export APP_PATH="${{ env.DEPLOY_DIR }}/app"
           export COMMON_LIB_PATH="${{ env.COMMON_LIB_HOST_PATH }}"
           export COMMON_CONFIG_PATH="${{ env.COMMON_CONFIG_HOST_PATH }}"
 
