@@ -92,23 +92,14 @@ jobs:
         run: |
           echo "📡 Testing Live HTTP Endpoints on Ephemeral Container (Port 8091)..."
           
-          HOST_IP="127.0.0.1"
-          for candidate in "127.0.0.1" "172.17.0.1" "192.168.1.68"; do
-            if curl -s --connect-timeout 2 "http://${candidate}:8091/health" >/dev/null 2>&1; then
-              HOST_IP="$candidate"
-              break
-            fi
-          done
-          echo "🌐 Testing against host IP: $HOST_IP"
-          
           # Health check
-          curl -f "http://${HOST_IP}:8091/health" || (echo "❌ Health check failed" && exit 1)
+          curl -f http://127.0.0.1:8091/health || (echo "❌ Health check failed" && exit 1)
           
           # Assistant summary endpoint
-          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:8091/api/v1/gexdex/assistant-summary?ticker=AAPL" || (echo "❌ Assistant summary endpoint failed" && exit 1)
+          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://127.0.0.1:8091/api/v1/gexdex/assistant-summary?ticker=AAPL" || (echo "❌ Assistant summary endpoint failed" && exit 1)
           
           # Chart image PNG endpoint
-          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:8091/api/v1/gexdex/chart.png?ticker=AAPL" -o /dev/null || (echo "❌ Chart PNG endpoint failed" && exit 1)
+          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://127.0.0.1:8091/api/v1/gexdex/chart.png?ticker=AAPL" -o /dev/null || (echo "❌ Chart PNG endpoint failed" && exit 1)
 
           echo "✅ All live HTTP integration endpoint tests passed on port 8091!"
 
@@ -142,23 +133,14 @@ jobs:
         run: |
           echo "📡 Testing Live Production HTTP Endpoints on Port 8090..."
           
-          HOST_IP="127.0.0.1"
-          for candidate in "127.0.0.1" "172.17.0.1" "192.168.1.68"; do
-            if curl -s --connect-timeout 2 "http://${candidate}:8090/health" >/dev/null 2>&1; then
-              HOST_IP="$candidate"
-              break
-            fi
-          done
-          echo "🌐 Testing against host IP: $HOST_IP"
-          
           # Health check
-          curl -f "http://${HOST_IP}:8090/health" || (echo "❌ Production Health check failed" && exit 1)
+          curl -f http://127.0.0.1:8090/health || (echo "❌ Production Health check failed" && exit 1)
           
           # Assistant summary endpoint
-          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:8090/api/v1/gexdex/assistant-summary?ticker=AAPL" || (echo "❌ Production Assistant summary endpoint failed" && exit 1)
+          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://127.0.0.1:8090/api/v1/gexdex/assistant-summary?ticker=AAPL" || (echo "❌ Production Assistant summary endpoint failed" && exit 1)
           
           # Chart image PNG endpoint
-          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:8090/api/v1/gexdex/chart.png?ticker=AAPL" -o /dev/null || (echo "❌ Production Chart PNG endpoint failed" && exit 1)
+          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://127.0.0.1:8090/api/v1/gexdex/chart.png?ticker=AAPL" -o /dev/null || (echo "❌ Production Chart PNG endpoint failed" && exit 1)
 
           echo "✅ All live production HTTP integration endpoint tests passed on port 8090!"
 
