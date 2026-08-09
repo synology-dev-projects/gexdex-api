@@ -89,27 +89,20 @@ jobs:
           cd "${{ env.DEPLOY_DIR }}"
           docker build --target test -t gexdex-api:test .
 
-      # 3. AUTO-PROMOTE & PRODUCTION CONTAINER LAUNCH
-      - name: Auto-Promote to Master & Launch Container
+      # 3. BRANCH CONTAINER LAUNCH
+      - name: Launch Container for Branch
         run: |
-          if [ "${{ github.ref_name }}" = "develop" ]; then
-            echo "✅ Develop verified. Auto-promoting to Master..."
-            git config user.name "GitHub Actions Bot"
-            git config user.email "actions@github.com"
-            git fetch origin
-            git checkout master 2>/dev/null || git checkout -b master origin/master
-            git pull origin master
-            git merge origin/develop --no-ff -m "Auto-merge develop to master"
-            git push origin master
-          fi
+          source ../../conf/syno_paths.env
+          BRANCH_NAME="${{ github.ref_name }}"
+          REPO_NAME="${{ github.event.repository.name }}"
+          TARGET_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/${REPO_NAME}"
 
-          echo "🐳 Launching Production Docker Container on Master..."
-          MASTER_PATH="${SYNOLOGY_ROOT_PATH}/master/${REPO_NAME}"
-          mkdir -p "$MASTER_PATH"
-          rm -rf "$MASTER_PATH"/*
-          cp -r ./* "$MASTER_PATH/" 2>/dev/null || true
-          
-          cd "$MASTER_PATH"
+          echo "🐳 Launching Docker Container for ${BRANCH_NAME} at ${TARGET_PATH}..."
+          mkdir -p "$TARGET_PATH"
+          rm -rf "$TARGET_PATH"/*
+          cp -r ./* "$TARGET_PATH/" 2>/dev/null || true
+
+          cd "$TARGET_PATH"
           docker compose down || true
           docker compose build --no-cache
           docker compose up -d --force-recreate
