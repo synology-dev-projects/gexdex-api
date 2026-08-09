@@ -125,13 +125,13 @@ jobs:
           echo "🌐 Testing against host IP: $HOST_IP"
           
           # Health check
-          curl -f "http://${HOST_IP}:${{ env.PORT }}/health" || (echo "❌ Health check failed" && exit 1)
+          curl -s -f "http://${HOST_IP}:${{ env.PORT }}/health" > /dev/null || (echo "❌ Health check failed" && exit 1)
           
           # Assistant summary endpoint
-          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:${{ env.PORT }}/api/v1/gexdex/assistant-summary?ticker=AAPL" || (echo "❌ Assistant summary endpoint failed" && exit 1)
+          curl -s -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:${{ env.PORT }}/api/v1/gexdex/assistant-summary?ticker=AAPL" > /dev/null || (echo "❌ Assistant summary endpoint failed" && exit 1)
           
           # Chart image PNG endpoint
-          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:${{ env.PORT }}/api/v1/gexdex/chart.png?ticker=AAPL" -o /dev/null || (echo "❌ Chart PNG endpoint failed" && exit 1)
+          curl -s -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:${{ env.PORT }}/api/v1/gexdex/chart.png?ticker=AAPL" -o /dev/null || (echo "❌ Chart PNG endpoint failed" && exit 1)
 
           echo "✅ All live HTTP integration endpoint tests passed on port ${{ env.PORT }}!"
 
@@ -153,5 +153,5 @@ jobs:
           git fetch origin develop
           git checkout master 2>/dev/null || git checkout -b master origin/master
           git pull origin master
-          git merge origin/develop --no-ff -m "Auto-merge develop to master [Skip CI]"
+          git merge origin/develop --no-ff -m "Auto-merge develop to master"
           git push origin master
