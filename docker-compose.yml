@@ -5,14 +5,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: gexdex-api-container
+    container_name: ${CONTAINER_NAME:-gexdex-api-container}
     ports:
-      - "8090:8000"
+      - "${PORT:-8090}:8000"
     environment:
-      - API_KEY=YOUR_SECRET_API_KEY_HERE
+      - API_KEY=${API_KEY:-YOUR_SECRET_API_KEY_HERE}
     volumes:
-      - /volume2/homes/rachardv/git-repos/master/gexdex-api/app:/app/app
-      - /volume2/homes/rachardv/git-repos/master/common-lib/common_lib:/app/common_lib
-      - /volume2/homes/rachardv/git-repos/master/common_config:/app/common_config
+      - ${APP_PATH:-/volume2/homes/rachardv/git-repos/master/gexdex-api/app}:/app/app
+      - ${COMMON_LIB_PATH:-/volume2/homes/rachardv/git-repos/master/common-lib/common_lib}:/app/common_lib
+      - ${COMMON_CONFIG_PATH:-/volume2/homes/rachardv/git-repos/master/common_config}:/app/common_config
     restart: always
-

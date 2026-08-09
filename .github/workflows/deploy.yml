@@ -19,7 +19,6 @@ jobs:
         with:
           fetch-depth: 0
 
-
       # 1. SETUP & CODE SYNC
       - name: Sync Workspace & Bundle Dependencies
         run: |
@@ -82,27 +81,67 @@ jobs:
           echo "API_KEY=${{ secrets.API_KEY || 'YOUR_SECRET_API_KEY_HERE' }}" > "$ENV_FILE"
           chmod 644 "$ENV_FILE"
 
-      # 2. DOCKER-NATIVE ISOLATED UNIT TESTING
-      - name: Run Docker Unit Tests
+      # 2. DOCKER ISOLATED UNIT TESTING
+      - name: Run Unit Tests
         run: |
           echo "🧪 Running unit tests in isolated Docker container..."
           cd "${{ env.DEPLOY_DIR }}"
           docker build --target test -t gexdex-api:test .
 
-      # 3. BRANCH CONTAINER LAUNCH (NO AUTO-PROMOTE SCRIPTING)
-      - name: Launch Container for Branch
+      # 3. DEVELOP BRANCH: EPHEMERAL STAGING CONTAINER & LIVE API TESTING
+      - name: Spin Up Ephemeral Staging Container (Port 8091)
+        if: github.ref_name == 'develop'
         run: |
-          source ../../conf/syno_paths.env
-          BRANCH_NAME="${{ github.ref_name }}"
-          REPO_NAME="${{ github.event.repository.name }}"
-          TARGET_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/${REPO_NAME}"
+          cd "${{ env.DEPLOY_DIR }}"
+          echo "🚀 Spinning up ephemeral staging container on port 8091..."
+          export CONTAINER_NAME=gexdex-api-dev
+          export PORT=8091
+          export APP_PATH="${{ env.DEPLOY_DIR }}/app"
+          export COMMON_LIB_PATH="${{ env.DEPLOY_DIR }}/common_lib"
+          export COMMON_CONFIG_PATH="${{ env.CONFIG_DIR }}"
 
-          echo "🐳 Launching Docker Container for ${BRANCH_NAME} at ${TARGET_PATH}..."
-          mkdir -p "$TARGET_PATH"
-          rm -rf "$TARGET_PATH"/*
-          cp -r ./* "$TARGET_PATH/" 2>/dev/null || true
+          docker compose down || true
+          docker compose build --no-cache
+          docker compose up -d --force-recreate
+          sleep 5
 
-          cd "$TARGET_PATH"
+      - name: Run Live HTTP Integration Endpoint Tests (Port 8091)
+        if: github.ref_name == 'develop'
+        run: |
+          echo "📡 Testing Live HTTP Endpoints on Ephemeral Container (Port 8091)..."
+          
+          # Health check
+          curl -f http://127.0.0.1:8091/health || (echo "❌ Health check failed" && exit 1)
+          
+          # Assistant summary endpoint
+          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://127.0.0.1:8091/api/v1/gexdex/assistant-summary?ticker=AAPL" || (echo "❌ Assistant summary endpoint failed" && exit 1)
+          
+          # Chart image PNG endpoint
+          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://127.0.0.1:8091/api/v1/gexdex/chart.png?ticker=AAPL" -o /dev/null || (echo "❌ Chart PNG endpoint failed" && exit 1)
+
+          echo "✅ All live HTTP integration endpoint tests passed on port 8091!"
+
+      - name: Tear Down Ephemeral Staging Container
+        if: always() && github.ref_name == 'develop'
+        run: |
+          cd "${{ env.DEPLOY_DIR }}"
+          echo "🧹 Cleaning up ephemeral staging container on port 8091..."
+          export CONTAINER_NAME=gexdex-api-dev
+          export PORT=8091
+          docker compose down || true
+
+      # 4. MASTER BRANCH: PRODUCTION CONTAINER DEPLOYMENT (Port 8090)
+      - name: Launch 24/7 Production Container on Master (Port 8090)
+        if: github.ref_name == 'master'
+        run: |
+          cd "${{ env.DEPLOY_DIR }}"
+          echo "🐳 Launching 24/7 Production Docker Container on Master (Port 8090)..."
+          export CONTAINER_NAME=gexdex-api-container
+          export PORT=8090
+          export APP_PATH="${{ env.DEPLOY_DIR }}/app"
+          export COMMON_LIB_PATH="${{ env.DEPLOY_DIR }}/common_lib"
+          export COMMON_CONFIG_PATH="${{ env.CONFIG_DIR }}"
+
           docker compose down || true
           docker compose build --no-cache
           docker compose up -d --force-recreate
