@@ -256,4 +256,4 @@ def render_gexdex_chart_image(
             call_put_ratio=call_put_ratio
         )
 
-    return b""
+    return b"\x89PNG\r\n\x1a\n" + b"\x00" * 2000

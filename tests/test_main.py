@@ -58,7 +58,8 @@ MOCK_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 2000
 @pytest.fixture(autouse=True)
 def mock_fetch_raw_data():
     with patch("app.services.gexdex_service.fetch_raw_data_for_ticker", return_value=MOCK_RAW_PAYLOAD), \
-         patch("app.services.gexdex_service.render_gexdex_chart_image", return_value=MOCK_PNG_BYTES):
+         patch("app.services.gexdex_service.render_gexdex_chart_image", return_value=MOCK_PNG_BYTES), \
+         patch("app.api.v1.endpoints.gexdex.render_gexdex_chart_image", return_value=MOCK_PNG_BYTES):
         yield
 
 
