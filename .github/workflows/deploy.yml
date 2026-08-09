@@ -102,14 +102,26 @@ jobs:
         run: |
           echo "📡 Testing Live HTTP Endpoints on Port ${{ env.PORT }}..."
           
-          # Determine reachable host IP (for containerized runner)
-          HOST_IP="127.0.0.1"
-          for candidate in "127.0.0.1" "172.17.0.1" "192.168.1.68"; do
-            if curl -s --connect-timeout 2 "http://${candidate}:${{ env.PORT }}/health" >/dev/null 2>&1; then
-              HOST_IP="$candidate"
-              break
-            fi
+          # Determine reachable host IP and wait for API to become ready
+          HOST_IP=""
+          for i in {1..15}; do
+            for candidate in "127.0.0.1" "172.17.0.1" "192.168.1.68"; do
+              if curl -s --connect-timeout 2 "http://${candidate}:${{ env.PORT }}/health" >/dev/null 2>&1; then
+                HOST_IP="$candidate"
+                break 2
+              fi
+            done
+            echo "⏳ Waiting for API to become ready on port ${{ env.PORT }} (attempt $i/15)..."
+            sleep 2
           done
+          
+          if [ -z "$HOST_IP" ]; then
+            echo "❌ CRITICAL ERROR: Could not reach the API on any expected IP. The container might have crashed."
+            echo "📜 Container Logs:"
+            docker logs ${{ env.CONTAINER_NAME }}
+            exit 1
+          fi
+
           echo "🌐 Testing against host IP: $HOST_IP"
           
           # Health check
