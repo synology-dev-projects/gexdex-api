@@ -82,7 +82,7 @@ jobs:
           export COMMON_CONFIG_PATH="${{ env.COMMON_CONFIG_HOST_PATH }}"
 
           docker compose down || true
-          docker compose build --no-cache
+          docker compose build
           docker compose up -d --force-recreate
           sleep 5
 
@@ -124,7 +124,7 @@ jobs:
           export COMMON_CONFIG_PATH="${{ env.COMMON_CONFIG_HOST_PATH }}"
 
           docker compose down || true
-          docker compose build --no-cache
+          docker compose build
           docker compose up -d --force-recreate
           sleep 5
 
