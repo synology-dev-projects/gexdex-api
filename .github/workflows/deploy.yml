@@ -20,25 +20,35 @@ jobs:
           fetch-depth: 0
 
       # 1. SETUP & CODE SYNC
-      - name: Sync Workspace & Bundle Dependencies
+      - name: Sync Workspace & Configure Paths
         run: |
           umask 002
           mkdir -p ../../conf
           if [ ! -f ../../conf/syno_paths.env ]; then
-            echo "SYNOLOGY_ROOT_PATH=/volume2/docker" > ../../conf/syno_paths.env
+            echo "SYNOLOGY_ROOT_PATH=/volume2/homes/rachardv/git-repos" > ../../conf/syno_paths.env
           fi
           source ../../conf/syno_paths.env
+
+          # Ensure SYNOLOGY_ROOT_PATH points to real git-repos folder
+          [ "$SYNOLOGY_ROOT_PATH" = "/volume2/docker" ] && SYNOLOGY_ROOT_PATH="/volume2/homes/rachardv/git-repos"
 
           BRANCH_NAME="${{ github.ref_name }}"
           REPO_NAME="${{ github.event.repository.name }}"
           TARGET_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/${REPO_NAME}"
-          COMMON_CONFIG_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/common_config"
+
+          # Master common-lib & common_config host locations
+          COMMON_LIB_HOST_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/common-lib/common_lib"
+          [ ! -d "$COMMON_LIB_HOST_PATH" ] && COMMON_LIB_HOST_PATH="${SYNOLOGY_ROOT_PATH}/master/common-lib/common_lib"
+
+          COMMON_CONFIG_HOST_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/common_config"
+          [ ! -d "$COMMON_CONFIG_HOST_PATH" ] && COMMON_CONFIG_HOST_PATH="${SYNOLOGY_ROOT_PATH}/master/common_config"
 
           echo "📂 Target Path: $TARGET_PATH"
           echo "DEPLOY_DIR=$TARGET_PATH" >> $GITHUB_ENV
-          echo "CONFIG_DIR=$COMMON_CONFIG_PATH" >> $GITHUB_ENV
+          echo "COMMON_LIB_HOST_PATH=$COMMON_LIB_HOST_PATH" >> $GITHUB_ENV
+          echo "COMMON_CONFIG_HOST_PATH=$COMMON_CONFIG_HOST_PATH" >> $GITHUB_ENV
 
-          mkdir -p "$TARGET_PATH" "$COMMON_CONFIG_PATH"
+          mkdir -p "$TARGET_PATH"
           rm -rf "$TARGET_PATH"/*
 
           echo "🚀 Copying latest project files..."
@@ -49,37 +59,8 @@ jobs:
           [ -d tests ] && cp -r tests "$TARGET_PATH/"
           [ -f requirements.txt ] && cp requirements.txt "$TARGET_PATH/"
 
-          # Locate production master deployment of common-lib
-          HOMES_MASTER_COMMON_LIB="/volume2/homes/rachardv/git-repos/master/common-lib/common_lib"
-          MASTER_COMMON_LIB="${SYNOLOGY_ROOT_PATH}/master/common-lib/common_lib"
-          DEVELOP_COMMON_LIB="${SYNOLOGY_ROOT_PATH}/develop/common-lib/common_lib"
-
-          COMMON_LIB_SRC=""
-          if [ -d "$HOMES_MASTER_COMMON_LIB" ]; then
-            COMMON_LIB_SRC="$HOMES_MASTER_COMMON_LIB"
-          elif [ -d "$MASTER_COMMON_LIB" ]; then
-            COMMON_LIB_SRC="$MASTER_COMMON_LIB"
-          elif [ -d "$DEVELOP_COMMON_LIB" ]; then
-            COMMON_LIB_SRC="$DEVELOP_COMMON_LIB"
-          elif [ -d "../common-lib/common_lib" ]; then
-            COMMON_LIB_SRC="../common-lib/common_lib"
-          fi
-
-          if [ -n "$COMMON_LIB_SRC" ]; then
-            echo "📦 Copying common_lib from $COMMON_LIB_SRC..."
-            rm -rf "$TARGET_PATH/common_lib"
-            cp -r "$COMMON_LIB_SRC" "$TARGET_PATH/common_lib"
-          else
-            echo "❌ ERROR: common_lib master deployment not found at $MASTER_COMMON_LIB!"
-            exit 1
-          fi
-
           sudo chown -R 1026:100 "$TARGET_PATH"
           chmod -R 775 "$TARGET_PATH"
-
-          ENV_FILE="${COMMON_CONFIG_PATH}/.env"
-          echo "API_KEY=${{ secrets.API_KEY || 'YOUR_SECRET_API_KEY_HERE' }}" > "$ENV_FILE"
-          chmod 644 "$ENV_FILE"
 
       # 2. DOCKER ISOLATED UNIT TESTING
       - name: Run Unit Tests
@@ -97,8 +78,8 @@ jobs:
           export CONTAINER_NAME=gexdex-api-dev
           export PORT=8091
           export APP_PATH="${{ env.DEPLOY_DIR }}/app"
-          export COMMON_LIB_PATH="${{ env.DEPLOY_DIR }}/common_lib"
-          export COMMON_CONFIG_PATH="${{ env.CONFIG_DIR }}"
+          export COMMON_LIB_PATH="${{ env.COMMON_LIB_HOST_PATH }}"
+          export COMMON_CONFIG_PATH="${{ env.COMMON_CONFIG_HOST_PATH }}"
 
           docker compose down || true
           docker compose build --no-cache
@@ -139,8 +120,8 @@ jobs:
           export CONTAINER_NAME=gexdex-api-container
           export PORT=8090
           export APP_PATH="${{ env.DEPLOY_DIR }}/app"
-          export COMMON_LIB_PATH="${{ env.DEPLOY_DIR }}/common_lib"
-          export COMMON_CONFIG_PATH="${{ env.CONFIG_DIR }}"
+          export COMMON_LIB_PATH="${{ env.COMMON_LIB_HOST_PATH }}"
+          export COMMON_CONFIG_PATH="${{ env.COMMON_CONFIG_HOST_PATH }}"
 
           docker compose down || true
           docker compose build --no-cache
