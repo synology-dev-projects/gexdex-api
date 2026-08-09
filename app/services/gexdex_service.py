@@ -3,6 +3,7 @@ import sys
 import logging
 from typing import Optional, Dict, List
 from datetime import datetime, timezone
+from pathlib import Path
 from pydantic import BaseModel, Field
 import pandas as pd
 import numpy as np
@@ -26,7 +27,7 @@ for path in candidate_paths:
 
 # Import shared common-lib connectors & configuration
 try:
-    from common_lib.config.main_config import load_config
+    from common_lib.config.main_config import MainConfig, load_config
     from common_lib.connectors.tradingedge.dexgex import (
         get_authenticated_session,
         extract_raw_data,
@@ -34,6 +35,7 @@ try:
         generate_gexdex_chart
     )
 except ImportError:
+    MainConfig = None
     load_config = None
     get_authenticated_session = None
     extract_raw_data = None
@@ -64,6 +66,7 @@ def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTi
     now_iso = datetime.now(timezone.utc).isoformat()
     spot = float(raw_data.get("spot_price", 0.0) or raw_data.get("spotPrice", 0.0) or 0.0)
     gex_wall = raw_data.get("gex_wall")
+    raw_cp_ratio = float(raw_data.get("call_put_ratio", 0.0) or 0.0)
 
     call_gex, put_gex, call_dex, put_dex = 0.0, 0.0, 0.0, 0.0
 
@@ -85,7 +88,11 @@ def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTi
     net_dex = call_dex - put_dex
     key_gamma_strike = float(gex_wall) if gex_wall is not None else spot
     zero_gex_level = spot if spot > 0 else key_gamma_strike
-    call_put_ratio = round(abs(call_gex / put_gex), 2) if put_gex != 0 else 1.0
+
+    if raw_cp_ratio > 0:
+        call_put_ratio = round(raw_cp_ratio, 2)
+    else:
+        call_put_ratio = round(abs(call_gex / put_gex), 2) if put_gex != 0 else 1.0
 
     return GexDexTickerMetrics(
         ticker=ticker,
@@ -110,14 +117,24 @@ def fetch_raw_data_for_ticker(
     Fetches raw option chain dictionary for a single ticker via common-lib.
     Default max_dte = 50, strike_range = 25.
     """
-    if load_config and get_authenticated_session and extract_raw_data:
+    if get_authenticated_session and extract_raw_data:
         try:
-            config = load_config()
-            session = get_authenticated_session(config)
-            if session:
-                return extract_raw_data(
-                    config, session, ticker, max_dte=max_dte, strike_range=strike_range
-                )
+            config = None
+            env_path = Path("/app/common_config/.env")
+            if env_path.exists() and MainConfig:
+                try:
+                    config = MainConfig(_env_file=str(env_path))
+                except Exception as ex:
+                    logging.warning(f"MainConfig(_env_file={env_path}) failed: {ex}")
+            if config is None and load_config:
+                config = load_config()
+
+            if config:
+                session = get_authenticated_session(config)
+                if session:
+                    return extract_raw_data(
+                        config, session, ticker, max_dte=max_dte, strike_range=strike_range
+                    )
         except Exception as e:
             logging.warning(f"Failed to fetch live TradingEdge session for {ticker}: {e}")
     return None
@@ -176,52 +193,58 @@ def render_gexdex_chart_image(
     """
     symbol = ticker.upper().strip()
     raw_data = fetch_raw_data_for_ticker(symbol, max_dte=max_dte, strike_range=strike_range)
+    df_raw = convert_raw_to_df(raw_data) if (raw_data and convert_raw_to_df) else None
 
-    spot_price = 311.21
-    call_wall = 320.00
-    put_wall = 310.00
-    call_put_ratio = 0.47
+    if raw_data and df_raw is not None and not df_raw.empty:
+        spot_price = float(raw_data.get("spot_price", 0.0) or raw_data.get("spotPrice", 0.0) or 0.0) or None
+        call_wall = float(raw_data.get("call_wall", 0.0) or raw_data.get("gex_wall", 0.0) or 0.0) or None
+        put_wall = float(raw_data.get("put_wall", 0.0) or 0.0) or None
+        call_put_ratio = float(raw_data.get("call_put_ratio", 0.0) or 0.0) or None
 
-    if raw_data:
-        spot_price = float(raw_data.get("spot_price", spot_price) or spot_price)
-        call_wall = float(raw_data.get("call_wall", call_wall) or call_wall)
-        put_wall = float(raw_data.get("put_wall", put_wall) or put_wall)
-        call_put_ratio = float(raw_data.get("call_put_ratio", call_put_ratio) or call_put_ratio)
+        if generate_gexdex_chart:
+            return generate_gexdex_chart(
+                df=df_raw,
+                ticker=symbol,
+                spot_price=spot_price,
+                call_wall=call_wall,
+                put_wall=put_wall,
+                call_put_ratio=call_put_ratio
+            )
+
+    spot_price = 225.50
+    call_wall = 235.00
+    put_wall = 220.00
+    call_put_ratio = 1.58
 
     expirations = [
         "2026-08-03", "2026-08-05", "2026-08-07", "2026-08-10", "2026-08-12",
         "2026-08-14", "2026-08-21", "2026-08-28", "2026-09-04", "2026-09-11", "2026-09-18"
     ]
-    strikes = np.arange(250, 375, 2.5)
+    strikes = np.arange(180, 270, 2.5)
 
-    df_raw = convert_raw_to_df(raw_data) if (raw_data and convert_raw_to_df) else None
-    if df_raw is not None and not df_raw.empty and "strike" in df_raw.columns:
-        df = df_raw.copy()
-    else:
-        # Generate rich options exposure matrix for BOTH CALLS and PUTS across all strikes
-        np.random.seed(42)
-        rows = []
-        for s in strikes:
-            call_factor = max(0.25, 1.0 - abs(s - (spot_price + 15.0)) / 75.0)
-            put_factor = max(0.25, 1.0 - abs(s - (spot_price - 15.0)) / 75.0)
+    np.random.seed(42)
+    rows = []
+    for s in strikes:
+        call_factor = max(0.25, 1.0 - abs(s - (spot_price + 15.0)) / 75.0)
+        put_factor = max(0.25, 1.0 - abs(s - (spot_price - 15.0)) / 75.0)
 
-            base_call_gex = 3.2e9 * call_factor
-            base_put_gex = 3.0e9 * put_factor
+        base_call_gex = 3.2e9 * call_factor
+        base_put_gex = 3.0e9 * put_factor
 
-            base_call_dex = 0.45e8 * call_factor
-            base_put_dex = 0.42e8 * put_factor
+        base_call_dex = 0.45e8 * call_factor
+        base_put_dex = 0.42e8 * put_factor
 
-            for idx, exp in enumerate(expirations):
-                factor = (idx + 1) / float(len(expirations))
-                rows.append({
-                    "strike": s,
-                    "exp_str": exp,
-                    "call_gex": base_call_gex * factor * np.random.uniform(0.35, 0.85),
-                    "put_gex": base_put_gex * factor * np.random.uniform(0.35, 0.85),
-                    "call_dex": base_call_dex * factor * np.random.uniform(0.35, 0.85),
-                    "put_dex": base_put_dex * factor * np.random.uniform(0.35, 0.85)
-                })
-        df = pd.DataFrame(rows)
+        for idx, exp in enumerate(expirations):
+            factor = (idx + 1) / float(len(expirations))
+            rows.append({
+                "strike": s,
+                "exp_str": exp,
+                "call_gex": base_call_gex * factor * np.random.uniform(0.35, 0.85),
+                "put_gex": base_put_gex * factor * np.random.uniform(0.35, 0.85),
+                "call_dex": base_call_dex * factor * np.random.uniform(0.35, 0.85),
+                "put_dex": base_put_dex * factor * np.random.uniform(0.35, 0.85)
+            })
+    df = pd.DataFrame(rows)
 
     if generate_gexdex_chart:
         return generate_gexdex_chart(
@@ -233,4 +256,4 @@ def render_gexdex_chart_image(
             call_put_ratio=call_put_ratio
         )
 
-    raise RuntimeError("common-lib generate_gexdex_chart function is unavailable")
+    return b""
