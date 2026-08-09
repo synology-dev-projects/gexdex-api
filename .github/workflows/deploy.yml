@@ -53,11 +53,11 @@ jobs:
 
           echo "🚀 Copying latest project files..."
           cp -r main.py "$TARGET_PATH/"
-          [ -d app ] && cp -r app "$TARGET_PATH/"
+          cp -r app "$TARGET_PATH/"
           cp -r Dockerfile "$TARGET_PATH/"
           cp -r docker-compose.yml "$TARGET_PATH/"
-          [ -d tests ] && cp -r tests "$TARGET_PATH/"
-          [ -f requirements.txt ] && cp requirements.txt "$TARGET_PATH/"
+          cp -r tests "$TARGET_PATH/"
+          cp requirements.txt "$TARGET_PATH/"
 
           sudo chown -R 1026:100 "$TARGET_PATH"
           chmod -R 775 "$TARGET_PATH"
