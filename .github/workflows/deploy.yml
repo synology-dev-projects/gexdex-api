@@ -19,90 +19,139 @@ jobs:
         with:
           fetch-depth: 0
 
-
       # 1. SETUP & CODE SYNC
-      - name: Sync Workspace & Bundle Dependencies
+      - name: Sync Workspace & Configure Paths
         run: |
           umask 002
           mkdir -p ../../conf
           if [ ! -f ../../conf/syno_paths.env ]; then
-            echo "SYNOLOGY_ROOT_PATH=/volume2/docker" > ../../conf/syno_paths.env
+            echo "SYNOLOGY_ROOT_PATH=/volume2/homes/rachardv/git-repos" > ../../conf/syno_paths.env
           fi
           source ../../conf/syno_paths.env
+
+          # Ensure SYNOLOGY_ROOT_PATH points to real git-repos folder without trailing slash
+          [ "$SYNOLOGY_ROOT_PATH" = "/volume2/docker" ] && SYNOLOGY_ROOT_PATH="/volume2/homes/rachardv/git-repos"
+          SYNOLOGY_ROOT_PATH="${SYNOLOGY_ROOT_PATH%/}"
 
           BRANCH_NAME="${{ github.ref_name }}"
           REPO_NAME="${{ github.event.repository.name }}"
           TARGET_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/${REPO_NAME}"
-          COMMON_CONFIG_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/common_config"
+
+          # Master common-lib & common_config host locations
+          COMMON_LIB_HOST_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/common-lib/common_lib"
+          [ ! -d "$COMMON_LIB_HOST_PATH" ] && COMMON_LIB_HOST_PATH="${SYNOLOGY_ROOT_PATH}/master/common-lib/common_lib"
+
+          COMMON_CONFIG_HOST_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/common_config"
+          [ ! -d "$COMMON_CONFIG_HOST_PATH" ] && COMMON_CONFIG_HOST_PATH="${SYNOLOGY_ROOT_PATH}/master/common_config"
 
           echo "📂 Target Path: $TARGET_PATH"
           echo "DEPLOY_DIR=$TARGET_PATH" >> $GITHUB_ENV
-          echo "CONFIG_DIR=$COMMON_CONFIG_PATH" >> $GITHUB_ENV
+          echo "COMMON_LIB_HOST_PATH=$COMMON_LIB_HOST_PATH" >> $GITHUB_ENV
+          echo "COMMON_CONFIG_HOST_PATH=$COMMON_CONFIG_HOST_PATH" >> $GITHUB_ENV
 
-          mkdir -p "$TARGET_PATH" "$COMMON_CONFIG_PATH"
-          rm -rf "$TARGET_PATH"/*
+          sudo mkdir -p "$TARGET_PATH"
+          sudo chown -R 1026:100 "$TARGET_PATH" 2>/dev/null || sudo chown -R rachardv:users "$TARGET_PATH"
+          sudo rm -rf "$TARGET_PATH"/*
 
           echo "🚀 Copying latest project files..."
           cp -r main.py "$TARGET_PATH/"
-          [ -d app ] && cp -r app "$TARGET_PATH/"
+          cp -r app "$TARGET_PATH/"
           cp -r Dockerfile "$TARGET_PATH/"
           cp -r docker-compose.yml "$TARGET_PATH/"
-          [ -d tests ] && cp -r tests "$TARGET_PATH/"
-          [ -f requirements.txt ] && cp requirements.txt "$TARGET_PATH/"
+          cp -r tests "$TARGET_PATH/"
+          cp requirements.txt "$TARGET_PATH/"
 
-          # Locate production master deployment of common-lib
-          HOMES_MASTER_COMMON_LIB="/volume2/homes/rachardv/git-repos/master/common-lib/common_lib"
-          MASTER_COMMON_LIB="${SYNOLOGY_ROOT_PATH}/master/common-lib/common_lib"
-          DEVELOP_COMMON_LIB="${SYNOLOGY_ROOT_PATH}/develop/common-lib/common_lib"
-
-          COMMON_LIB_SRC=""
-          if [ -d "$HOMES_MASTER_COMMON_LIB" ]; then
-            COMMON_LIB_SRC="$HOMES_MASTER_COMMON_LIB"
-          elif [ -d "$MASTER_COMMON_LIB" ]; then
-            COMMON_LIB_SRC="$MASTER_COMMON_LIB"
-          elif [ -d "$DEVELOP_COMMON_LIB" ]; then
-            COMMON_LIB_SRC="$DEVELOP_COMMON_LIB"
-          elif [ -d "../common-lib/common_lib" ]; then
-            COMMON_LIB_SRC="../common-lib/common_lib"
-          fi
-
-          if [ -n "$COMMON_LIB_SRC" ]; then
-            echo "📦 Copying common_lib from $COMMON_LIB_SRC..."
-            rm -rf "$TARGET_PATH/common_lib"
-            cp -r "$COMMON_LIB_SRC" "$TARGET_PATH/common_lib"
-          else
-            echo "❌ ERROR: common_lib master deployment not found at $MASTER_COMMON_LIB!"
-            exit 1
-          fi
-
-          sudo chown -R 1026:100 "$TARGET_PATH"
+          sudo chown -R 1026:100 "$TARGET_PATH" 2>/dev/null || sudo chown -R rachardv:users "$TARGET_PATH"
           chmod -R 775 "$TARGET_PATH"
 
-          ENV_FILE="${COMMON_CONFIG_PATH}/.env"
-          echo "API_KEY=${{ secrets.API_KEY || 'YOUR_SECRET_API_KEY_HERE' }}" > "$ENV_FILE"
-          chmod 644 "$ENV_FILE"
-
-      # 2. DOCKER-NATIVE ISOLATED UNIT TESTING
-      - name: Run Docker Unit Tests
+      # 2. DOCKER ISOLATED UNIT TESTING
+      - name: Run Unit Tests
         run: |
           echo "🧪 Running unit tests in isolated Docker container..."
           cd "${{ env.DEPLOY_DIR }}"
           docker build --target test -t gexdex-api:test .
 
-      # 3. BRANCH CONTAINER LAUNCH (NO AUTO-PROMOTE SCRIPTING)
-      - name: Launch Container for Branch
+      # 3. CONFIGURE DYNAMIC PORTS & DEPLOYMENT
+      - name: Configure Port & Environment
         run: |
-          source ../../conf/syno_paths.env
-          BRANCH_NAME="${{ github.ref_name }}"
-          REPO_NAME="${{ github.event.repository.name }}"
-          TARGET_PATH="${SYNOLOGY_ROOT_PATH}/${BRANCH_NAME}/${REPO_NAME}"
+          if [ "${{ github.ref_name }}" == "develop" ]; then
+            echo "PORT=8091" >> $GITHUB_ENV
+            echo "CONTAINER_NAME=gexdex-api-dev" >> $GITHUB_ENV
+            echo "🚀 Target Environment: STAGING (Ephemeral)"
+          else
+            echo "PORT=8090" >> $GITHUB_ENV
+            echo "CONTAINER_NAME=gexdex-api-prod" >> $GITHUB_ENV
+            echo "🐳 Target Environment: PRODUCTION (24/7)"
+          fi
+          echo "COMMON_LIB_PATH=${{ env.COMMON_LIB_HOST_PATH }}" >> $GITHUB_ENV
+          echo "COMMON_CONFIG_PATH=${{ env.COMMON_CONFIG_HOST_PATH }}" >> $GITHUB_ENV
 
-          echo "🐳 Launching Docker Container for ${BRANCH_NAME} at ${TARGET_PATH}..."
-          mkdir -p "$TARGET_PATH"
-          rm -rf "$TARGET_PATH"/*
-          cp -r ./* "$TARGET_PATH/" 2>/dev/null || true
-
-          cd "$TARGET_PATH"
+      # 4. SPIN UP CONTAINER (Master & Develop)
+      - name: Spin Up Docker Container
+        run: |
+          cd "${{ env.DEPLOY_DIR }}"
+          echo "🚀 Spinning up container ${CONTAINER_NAME} on port ${PORT}..."
+          
           docker compose down || true
-          docker compose build --no-cache
+          docker compose build
           docker compose up -d --force-recreate
+          sleep 5
+
+      # 5. RUN LIVE HTTP ENDPOINT TESTS (Master & Develop)
+      - name: Run Live HTTP Integration Endpoint Tests
+        run: |
+          echo "📡 Testing Live HTTP Endpoints on Port ${{ env.PORT }}..."
+          
+          # Determine reachable host IP and wait for API to become ready
+          HOST_IP=""
+          for i in {1..15}; do
+            for candidate in "127.0.0.1" "172.17.0.1" "192.168.1.68"; do
+              if curl -s --connect-timeout 2 "http://${candidate}:${{ env.PORT }}/health" >/dev/null 2>&1; then
+                HOST_IP="$candidate"
+                break 2
+              fi
+            done
+            echo "⏳ Waiting for API to become ready on port ${{ env.PORT }} (attempt $i/15)..."
+            sleep 2
+          done
+          
+          if [ -z "$HOST_IP" ]; then
+            echo "❌ CRITICAL ERROR: Could not reach the API on any expected IP. The container might have crashed."
+            echo "📜 Container Logs:"
+            docker logs ${{ env.CONTAINER_NAME }}
+            exit 1
+          fi
+
+          echo "🌐 Testing against host IP: $HOST_IP"
+          
+          # Health check
+          curl -f "http://${HOST_IP}:${{ env.PORT }}/health" || (echo "❌ Health check failed" && exit 1)
+          
+          # Assistant summary endpoint
+          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:${{ env.PORT }}/api/v1/gexdex/assistant-summary?ticker=AAPL" || (echo "❌ Assistant summary endpoint failed" && exit 1)
+          
+          # Chart image PNG endpoint
+          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:${{ env.PORT }}/api/v1/gexdex/chart.png?ticker=AAPL" -o /dev/null || (echo "❌ Chart PNG endpoint failed" && exit 1)
+
+          echo "✅ All live HTTP integration endpoint tests passed on port ${{ env.PORT }}!"
+
+      # 6. CLEANUP (Only on Develop)
+      - name: Tear Down Ephemeral Staging Container
+        if: always() && github.ref_name == 'develop'
+        run: |
+          cd "${{ env.DEPLOY_DIR }}"
+          echo "🧹 Cleaning up ephemeral staging container on port ${{ env.PORT }}..."
+          docker compose down || true
+
+      # 7. AUTO-PROMOTE DEVELOP TO MASTER (Only on Develop)
+      - name: Auto-Promote Verified Develop to Master
+        if: github.ref_name == 'develop'
+        run: |
+          echo "✅ Develop integration tests verified. Auto-promoting to Master..."
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          git fetch origin develop
+          git checkout master 2>/dev/null || git checkout -b master origin/master
+          git pull origin master
+          git merge origin/develop --no-ff -m "Auto-merge develop to master [Skip CI]"
+          git push origin master
