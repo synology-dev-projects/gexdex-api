@@ -89,7 +89,7 @@ jobs:
           cd "${{ env.DEPLOY_DIR }}"
           docker build --target test -t gexdex-api:test .
 
-      # 3. BRANCH CONTAINER LAUNCH
+      # 3. BRANCH CONTAINER LAUNCH (NO AUTO-PROMOTE SCRIPTING)
       - name: Launch Container for Branch
         run: |
           source ../../conf/syno_paths.env
