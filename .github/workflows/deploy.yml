@@ -145,6 +145,23 @@ jobs:
           docker compose down || true
           docker compose build --no-cache
           docker compose up -d --force-recreate
+          sleep 5
+
+      - name: Run Live Production HTTP Integration Endpoint Tests (Port 8090)
+        if: github.ref_name == 'master'
+        run: |
+          echo "📡 Testing Live Production HTTP Endpoints on Port 8090..."
+          
+          # Health check
+          curl -f http://127.0.0.1:8090/health || (echo "❌ Production Health check failed" && exit 1)
+          
+          # Assistant summary endpoint
+          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://127.0.0.1:8090/api/v1/gexdex/assistant-summary?ticker=AAPL" || (echo "❌ Production Assistant summary endpoint failed" && exit 1)
+          
+          # Chart image PNG endpoint
+          curl -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://127.0.0.1:8090/api/v1/gexdex/chart.png?ticker=AAPL" -o /dev/null || (echo "❌ Production Chart PNG endpoint failed" && exit 1)
+
+          echo "✅ All live production HTTP integration endpoint tests passed on port 8090!"
 
       # 5. AUTO-PROMOTE DEVELOP TO MASTER (ONLY AFTER DEVELOP INTEGRATION TESTS PASS)
       - name: Auto-Promote Verified Develop to Master
