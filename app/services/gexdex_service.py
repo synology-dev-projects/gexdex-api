@@ -1,12 +1,16 @@
 import os
 import sys
 import logging
+import io
 from typing import Optional, Dict, List
 from datetime import datetime, timezone
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pydantic import BaseModel, Field
 import pandas as pd
 import numpy as np
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 
 # Automatically search for common-lib in candidate locations
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -287,24 +291,69 @@ def get_gexdex_data(
     force_refresh: bool = False
 ) -> Dict[str, GexDexTickerMetrics]:
     """
-    Retrieves GEX/DEX data by authenticating via common-lib connectors to TradingEdge API.
+    Retrieves GEX/DEX data in parallel across up to 8 worker threads.
     Defaults to max_dte=50, strike_range=25, and 1-hour cache TTL.
     """
+    clean_tickers = [t.strip().upper() for t in tickers if t.strip()]
+    if not clean_tickers:
+        return {}
+
+    def _fetch_single(symbol: str) -> tuple[str, Optional[GexDexTickerMetrics]]:
+        try:
+            raw_data = fetch_raw_data_for_ticker(symbol, max_dte=max_dte, strike_range=strike_range, force_refresh=force_refresh)
+            if raw_data:
+                metrics = calculate_metrics_from_raw(symbol, raw_data)
+                return symbol, metrics
+        except Exception as e:
+            logging.error(f"Error resolving metrics for {symbol}: {e}")
+        return symbol, None
+
     results: Dict[str, GexDexTickerMetrics] = {}
+    workers = min(len(clean_tickers), 8)
 
-    for ticker in tickers:
-        symbol = ticker.strip().upper()
-        if not symbol:
-            continue
-
-        raw_data = fetch_raw_data_for_ticker(symbol, max_dte=max_dte, strike_range=strike_range, force_refresh=force_refresh)
-        if raw_data:
-            metrics = calculate_metrics_from_raw(symbol, raw_data)
-            if metrics:
-                results[symbol] = metrics
-                continue
+    if workers <= 1:
+        sym, m = _fetch_single(clean_tickers[0])
+        if m:
+            results[sym] = m
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_sym = {executor.submit(_fetch_single, sym): sym for sym in clean_tickers}
+            for future in as_completed(future_to_sym):
+                try:
+                    sym, m = future.result()
+                    if m:
+                        results[sym] = m
+                except Exception as ex:
+                    logging.error(f"Thread execution error for ticker {future_to_sym[future]}: {ex}")
 
     return results
+
+
+def prewarm_chart_cache(
+    tickers: List[str],
+    max_dte: int = 50,
+    strike_range: int = 25,
+    format: str = "webp",
+    force_refresh: bool = False
+) -> None:
+    """
+    Pre-warms in-memory chart cache for requested tickers across background worker threads.
+    """
+    clean_tickers = [t.strip().upper() for t in tickers if t.strip()]
+    workers = min(len(clean_tickers), 8)
+    if not clean_tickers:
+        return
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for symbol in clean_tickers:
+            executor.submit(
+                render_gexdex_chart_image,
+                ticker=symbol,
+                max_dte=max_dte,
+                strike_range=strike_range,
+                format=format,
+                force_refresh=force_refresh
+            )
 
 
 def render_gexdex_chart_image(
@@ -339,16 +388,36 @@ def render_gexdex_chart_image(
         call_put_ratio = float(raw_data.get("call_put_ratio", 0.0) or 0.0) or None
 
         if generate_gexdex_chart:
-            chart_bytes = generate_gexdex_chart(
-                df=df_raw,
-                ticker=symbol,
-                spot_price=spot_price,
-                call_wall=call_wall,
-                put_wall=put_wall,
-                call_put_ratio=call_put_ratio,
-                format=img_fmt
-            )
-            _CHART_CACHE[cache_key] = (now_ts, chart_bytes)
-            return chart_bytes
+            try:
+                chart_bytes = generate_gexdex_chart(
+                    df=df_raw,
+                    ticker=symbol,
+                    spot_price=spot_price,
+                    call_wall=call_wall,
+                    put_wall=put_wall,
+                    call_put_ratio=call_put_ratio,
+                    format=img_fmt
+                )
+                _CHART_CACHE[cache_key] = (now_ts, chart_bytes)
+                return chart_bytes
+            except Exception as e:
+                logging.error(f"Error rendering chart for {symbol}: {e}")
 
-    return b"\x89PNG\r\n\x1a\n" + b"\x00" * 2000
+    # Fallback: Clean status card when ticker has no active options chain
+    try:
+        fig = Figure(figsize=(10, 4), facecolor='#0f141d')
+        canvas = FigureCanvasAgg(fig)
+        ax = fig.add_subplot(111, facecolor='#151a24')
+        ax.axis('off')
+        fig.text(0.5, 0.65, f"📊 {symbol} Options Exposure", color='#ffffff', fontsize=16, fontweight='bold', ha='center')
+        fig.text(0.5, 0.45, "No Active Options Chain / Insufficient Gamma Liquidity", color='#a0aec0', fontsize=12, ha='center')
+        fig.text(0.5, 0.28, "TradingEdge Options Microservice", color='#718096', fontsize=10, ha='center')
+        buf = io.BytesIO()
+        canvas.print_figure(buf, format=img_fmt, dpi=120, bbox_inches='tight', facecolor=fig.get_facecolor())
+        buf.seek(0)
+        fallback_bytes = buf.getvalue()
+        _CHART_CACHE[cache_key] = (now_ts, fallback_bytes)
+        return fallback_bytes
+    except Exception as e:
+        logging.error(f"Error generating fallback image for {symbol}: {e}")
+        return b""

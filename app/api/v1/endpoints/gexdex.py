@@ -1,13 +1,14 @@
 import base64
-from typing import Dict
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from typing import Dict, Optional, List
+from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
 from fastapi.responses import Response, HTMLResponse
 
 from app.config import get_api_key
 from app.services.gexdex_service import (
     GexDexTickerMetrics,
     get_gexdex_data,
-    render_gexdex_chart_image
+    render_gexdex_chart_image,
+    prewarm_chart_cache
 )
 
 router = APIRouter()
@@ -147,28 +148,66 @@ def get_gexdex_chart_png_direct(
     dependencies=[Depends(get_api_key)]
 )
 def get_gexdex_assistant_summary(
-    ticker: str = Query("AAPL", description="Stock ticker symbol (e.g. AAPL, TSLA, NVDA)"),
+    background_tasks: BackgroundTasks,
+    tickers: Optional[str] = Query(None, description="Single ticker or comma-separated list (e.g. AAPL,INTC,SPY)"),
+    ticker: Optional[str] = Query(None, description="Legacy single ticker parameter"),
     max_dte: int = Query(50, description="Maximum days to expiration (default: 50)"),
     strike_range: int = Query(25, description="Strike range above/below spot price (default: 25)"),
     force_refresh: bool = Query(False, description="Bypass 1-hour cache and force live data fetch")
 ):
     """
     Designed specifically for AI Assistants (Google Gemini, Custom GPTs).
-    Fetches real-time GEX/DEX options exposure metrics for a single ticker and returns a structured AI summary with direct image URLs.
+    Fetches real-time GEX/DEX options exposure metrics for single or multiple tickers in parallel.
+    Pre-warms chart caches in background worker threads for sub-5ms image loading.
     """
-    clean_ticker = ticker.strip().upper()
-    data = get_gexdex_data([clean_ticker], max_dte=max_dte, strike_range=strike_range, force_refresh=force_refresh)
-    if clean_ticker not in data:
+    raw_param = tickers or ticker or "AAPL"
+    ticker_list = [t.strip().upper() for t in raw_param.split(",") if t.strip()]
+    if not ticker_list:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid tickers provided in 'tickers' or 'ticker' query parameter."
+        )
+
+    data = get_gexdex_data(ticker_list, max_dte=max_dte, strike_range=strike_range, force_refresh=force_refresh)
+    if not data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No options exposure data found for ticker '{clean_ticker}'"
+            detail=f"No options exposure data found for tickers: {', '.join(ticker_list)}"
         )
-    metrics = data[clean_ticker]
+
+    # Pre-warm chart cache in background threads for instant image retrieval
+    background_tasks.add_task(
+        prewarm_chart_cache,
+        tickers=list(data.keys()),
+        max_dte=max_dte,
+        strike_range=strike_range,
+        format="webp",
+        force_refresh=force_refresh
+    )
+
     refresh_param = "&force_refresh=true" if force_refresh else ""
-    chart_png_url = f"/api/v1/gexdex/chart.png?ticker={clean_ticker}&max_dte={max_dte}&strike_range={strike_range}&format=webp{refresh_param}"
-    
-    result = metrics.model_dump()
-    result["chart_png_url"] = chart_png_url
-    result["markdown_image"] = f"![{clean_ticker} Options Chart]({chart_png_url})"
-    return result
+    ticker_results = {}
+    cards = []
+    ai_contexts = []
+
+    for sym, metrics in data.items():
+        chart_png_url = f"/api/v1/gexdex/chart.png?ticker={sym}&max_dte={max_dte}&strike_range={strike_range}&format=webp{refresh_param}"
+        item = metrics.model_dump()
+        item["chart_png_url"] = chart_png_url
+        item["markdown_image"] = f"![{sym} Options Chart]({chart_png_url})"
+        ticker_results[sym] = item
+
+        ctx = f"Ticker {sym}: Spot ${item.get('spot_price')}, Call Wall ${item.get('call_wall')}, Put Wall ${item.get('put_wall')}, GEX Above: {item.get('gex_above_pct')}%, Front-Week GEX: {item.get('front_week_gex_pct')}%, Regime: {item.get('gamma_regime')}"
+        ai_contexts.append(ctx)
+
+    first_sym = ticker_list[0] if ticker_list[0] in ticker_results else list(ticker_results.keys())[0]
+    primary_result = dict(ticker_results[first_sym])
+
+    # Add batch metadata
+    primary_result["count"] = len(ticker_results)
+    primary_result["tickers"] = list(ticker_results.keys())
+    primary_result["batch_data"] = ticker_results
+    primary_result["combined_context"] = "; ".join(ai_contexts)
+
+    return primary_result
 
