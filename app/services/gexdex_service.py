@@ -108,6 +108,11 @@ def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTi
     )
 
 
+_RAW_CACHE: Dict[str, tuple[float, dict]] = {}
+_CHART_CACHE: Dict[str, tuple[float, bytes]] = {}
+CACHE_TTL_SECONDS = 60.0
+
+
 def fetch_raw_data_for_ticker(
     ticker: str,
     max_dte: int = 50,
@@ -115,8 +120,17 @@ def fetch_raw_data_for_ticker(
 ) -> Optional[dict]:
     """
     Fetches raw option chain dictionary for a single ticker via common-lib.
-    Default max_dte = 50, strike_range = 25.
+    Utilizes 60s in-memory TTL cache to eliminate redundant upstream calls.
     """
+    symbol = ticker.strip().upper()
+    cache_key = f"{symbol}_{max_dte}_{strike_range}"
+    now_ts = datetime.now(timezone.utc).timestamp()
+
+    if cache_key in _RAW_CACHE:
+        cached_time, cached_payload = _RAW_CACHE[cache_key]
+        if (now_ts - cached_time) < CACHE_TTL_SECONDS:
+            return cached_payload
+
     if get_authenticated_session and extract_raw_data:
         try:
             config = None
@@ -132,11 +146,14 @@ def fetch_raw_data_for_ticker(
             if config:
                 session = get_authenticated_session(config)
                 if session:
-                    return extract_raw_data(
-                        config, session, ticker, max_dte=max_dte, strike_range=strike_range
+                    raw = extract_raw_data(
+                        config, session, symbol, max_dte=max_dte, strike_range=strike_range
                     )
+                    if raw and isinstance(raw, dict):
+                        _RAW_CACHE[cache_key] = (now_ts, raw)
+                        return raw
         except Exception as e:
-            logging.warning(f"Failed to fetch live TradingEdge session for {ticker}: {e}")
+            logging.warning(f"Failed to fetch live TradingEdge session for {symbol}: {e}")
     return None
 
 
@@ -163,35 +180,30 @@ def get_gexdex_data(
                 results[symbol] = metrics
                 continue
 
-        # Dynamic fallback engine if live session is unconfigured
-        now_iso = datetime.now(timezone.utc).isoformat()
-        is_aapl = (symbol == "AAPL")
-        results[symbol] = GexDexTickerMetrics(
-            ticker=symbol,
-            spot_price=225.50 if is_aapl else 215.00,
-            net_gex=1250000.50 if is_aapl else -450000.25,
-            net_dex=850200.00 if is_aapl else 1200300.75,
-            zero_gex_level=225.50 if is_aapl else 215.00,
-            call_gex=3400000.00,
-            put_gex=2149999.50,
-            call_put_ratio=1.58,
-            key_gamma_strike=230.00 if is_aapl else 220.00,
-            updated_at=now_iso
-        )
-
     return results
 
 
 def render_gexdex_chart_image(
     ticker: str = "AAPL",
     max_dte: int = 50,
-    strike_range: int = 25
+    strike_range: int = 25,
+    format: str = "webp"
 ) -> bytes:
     """
     Generates a high-definition, dark-mode double-sided bi-directional horizontal bar chart
     matching the GEX & DEX Dashboard design by delegating to common-lib generate_gexdex_chart.
+    Supports WebP (default, 35KB) and PNG formats with in-memory caching.
     """
     symbol = ticker.upper().strip()
+    img_fmt = format.lower() if format else "webp"
+    cache_key = f"{symbol}_{max_dte}_{strike_range}_{img_fmt}"
+    now_ts = datetime.now(timezone.utc).timestamp()
+
+    if cache_key in _CHART_CACHE:
+        cached_time, cached_bytes = _CHART_CACHE[cache_key]
+        if (now_ts - cached_time) < CACHE_TTL_SECONDS:
+            return cached_bytes
+
     raw_data = fetch_raw_data_for_ticker(symbol, max_dte=max_dte, strike_range=strike_range)
     df_raw = convert_raw_to_df(raw_data) if (raw_data and convert_raw_to_df) else None
 
@@ -202,58 +214,16 @@ def render_gexdex_chart_image(
         call_put_ratio = float(raw_data.get("call_put_ratio", 0.0) or 0.0) or None
 
         if generate_gexdex_chart:
-            return generate_gexdex_chart(
+            chart_bytes = generate_gexdex_chart(
                 df=df_raw,
                 ticker=symbol,
                 spot_price=spot_price,
                 call_wall=call_wall,
                 put_wall=put_wall,
-                call_put_ratio=call_put_ratio
+                call_put_ratio=call_put_ratio,
+                format=img_fmt
             )
-
-    spot_price = 225.50
-    call_wall = 235.00
-    put_wall = 220.00
-    call_put_ratio = 1.58
-
-    expirations = [
-        "2026-08-03", "2026-08-05", "2026-08-07", "2026-08-10", "2026-08-12",
-        "2026-08-14", "2026-08-21", "2026-08-28", "2026-09-04", "2026-09-11", "2026-09-18"
-    ]
-    strikes = np.arange(180, 270, 2.5)
-
-    np.random.seed(42)
-    rows = []
-    for s in strikes:
-        call_factor = max(0.25, 1.0 - abs(s - (spot_price + 15.0)) / 75.0)
-        put_factor = max(0.25, 1.0 - abs(s - (spot_price - 15.0)) / 75.0)
-
-        base_call_gex = 3.2e9 * call_factor
-        base_put_gex = 3.0e9 * put_factor
-
-        base_call_dex = 0.45e8 * call_factor
-        base_put_dex = 0.42e8 * put_factor
-
-        for idx, exp in enumerate(expirations):
-            factor = (idx + 1) / float(len(expirations))
-            rows.append({
-                "strike": s,
-                "exp_str": exp,
-                "call_gex": base_call_gex * factor * np.random.uniform(0.35, 0.85),
-                "put_gex": base_put_gex * factor * np.random.uniform(0.35, 0.85),
-                "call_dex": base_call_dex * factor * np.random.uniform(0.35, 0.85),
-                "put_dex": base_put_dex * factor * np.random.uniform(0.35, 0.85)
-            })
-    df = pd.DataFrame(rows)
-
-    if generate_gexdex_chart:
-        return generate_gexdex_chart(
-            df=df,
-            ticker=symbol,
-            spot_price=spot_price,
-            call_wall=call_wall,
-            put_wall=put_wall,
-            call_put_ratio=call_put_ratio
-        )
+            _CHART_CACHE[cache_key] = (now_ts, chart_bytes)
+            return chart_bytes
 
     return b"\x89PNG\r\n\x1a\n" + b"\x00" * 2000
