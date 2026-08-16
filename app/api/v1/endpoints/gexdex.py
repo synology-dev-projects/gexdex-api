@@ -126,14 +126,17 @@ def get_gexdex_chart_png_direct(
     ticker: str = Query("AAPL", description="Stock ticker symbol"),
     max_dte: int = Query(50, description="Maximum days to expiration (default: 50)"),
     strike_range: int = Query(25, description="Strike range above/below spot price (default: 25)"),
-    format: str = Query("png", description="Image format: 'png' or 'webp'")
+    format: str = Query("png", description="Image format: 'png' or 'webp'"),
+    force_refresh: bool = Query(False, description="Bypass 1-hour cache and force live chart re-render")
 ):
     """
     Returns direct image binary (PNG or WebP) for embedding in markdown, Discord, or web UIs.
     Defaults to format='png'.
     """
     img_fmt = format.lower() if format else "png"
-    img_bytes = render_gexdex_chart_image(ticker, max_dte=max_dte, strike_range=strike_range, format=img_fmt)
+    img_bytes = render_gexdex_chart_image(
+        ticker, max_dte=max_dte, strike_range=strike_range, format=img_fmt, force_refresh=force_refresh
+    )
     media_type = "image/webp" if img_fmt == "webp" else "image/png"
     return Response(content=img_bytes, media_type=media_type)
 
@@ -146,21 +149,23 @@ def get_gexdex_chart_png_direct(
 def get_gexdex_assistant_summary(
     ticker: str = Query("AAPL", description="Stock ticker symbol (e.g. AAPL, TSLA, NVDA)"),
     max_dte: int = Query(50, description="Maximum days to expiration (default: 50)"),
-    strike_range: int = Query(25, description="Strike range above/below spot price (default: 25)")
+    strike_range: int = Query(25, description="Strike range above/below spot price (default: 25)"),
+    force_refresh: bool = Query(False, description="Bypass 1-hour cache and force live data fetch")
 ):
     """
     Designed specifically for AI Assistants (Google Gemini, Custom GPTs).
     Fetches real-time GEX/DEX options exposure metrics for a single ticker and returns a structured AI summary with direct image URLs.
     """
     clean_ticker = ticker.strip().upper()
-    data = get_gexdex_data([clean_ticker], max_dte=max_dte, strike_range=strike_range)
+    data = get_gexdex_data([clean_ticker], max_dte=max_dte, strike_range=strike_range, force_refresh=force_refresh)
     if clean_ticker not in data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No options exposure data found for ticker '{clean_ticker}'"
         )
     metrics = data[clean_ticker]
-    chart_png_url = f"/api/v1/gexdex/chart.png?ticker={clean_ticker}&max_dte={max_dte}&strike_range={strike_range}&format=webp"
+    refresh_param = "&force_refresh=true" if force_refresh else ""
+    chart_png_url = f"/api/v1/gexdex/chart.png?ticker={clean_ticker}&max_dte={max_dte}&strike_range={strike_range}&format=webp{refresh_param}"
     
     result = metrics.model_dump()
     result["chart_png_url"] = chart_png_url

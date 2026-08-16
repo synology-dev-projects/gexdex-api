@@ -232,23 +232,24 @@ def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTi
 
 _RAW_CACHE: Dict[str, tuple[float, dict]] = {}
 _CHART_CACHE: Dict[str, tuple[float, bytes]] = {}
-CACHE_TTL_SECONDS = 60.0
+CACHE_TTL_SECONDS = 3600.0
 
 
 def fetch_raw_data_for_ticker(
     ticker: str,
     max_dte: int = 50,
-    strike_range: int = 25
+    strike_range: int = 25,
+    force_refresh: bool = False
 ) -> Optional[dict]:
     """
     Fetches raw option chain dictionary for a single ticker via common-lib.
-    Utilizes 60s in-memory TTL cache to eliminate redundant upstream calls.
+    Utilizes 1-hour in-memory TTL cache unless force_refresh=True.
     """
     symbol = ticker.strip().upper()
     cache_key = f"{symbol}_{max_dte}_{strike_range}"
     now_ts = datetime.now(timezone.utc).timestamp()
 
-    if cache_key in _RAW_CACHE:
+    if not force_refresh and cache_key in _RAW_CACHE:
         cached_time, cached_payload = _RAW_CACHE[cache_key]
         if (now_ts - cached_time) < CACHE_TTL_SECONDS:
             return cached_payload
@@ -266,7 +267,7 @@ def fetch_raw_data_for_ticker(
                 config = load_config()
 
             if config:
-                session = get_authenticated_session(config)
+                session = get_authenticated_session(config, force_refresh=force_refresh)
                 if session:
                     raw = extract_raw_data(
                         config, session, symbol, max_dte=max_dte, strike_range=strike_range
@@ -282,11 +283,12 @@ def fetch_raw_data_for_ticker(
 def get_gexdex_data(
     tickers: List[str],
     max_dte: int = 50,
-    strike_range: int = 25
+    strike_range: int = 25,
+    force_refresh: bool = False
 ) -> Dict[str, GexDexTickerMetrics]:
     """
     Retrieves GEX/DEX data by authenticating via common-lib connectors to TradingEdge API.
-    Defaults to max_dte=50 and strike_range=25.
+    Defaults to max_dte=50, strike_range=25, and 1-hour cache TTL.
     """
     results: Dict[str, GexDexTickerMetrics] = {}
 
@@ -295,7 +297,7 @@ def get_gexdex_data(
         if not symbol:
             continue
 
-        raw_data = fetch_raw_data_for_ticker(symbol, max_dte=max_dte, strike_range=strike_range)
+        raw_data = fetch_raw_data_for_ticker(symbol, max_dte=max_dte, strike_range=strike_range, force_refresh=force_refresh)
         if raw_data:
             metrics = calculate_metrics_from_raw(symbol, raw_data)
             if metrics:
@@ -309,7 +311,8 @@ def render_gexdex_chart_image(
     ticker: str = "AAPL",
     max_dte: int = 50,
     strike_range: int = 25,
-    format: str = "webp"
+    format: str = "webp",
+    force_refresh: bool = False
 ) -> bytes:
     """
     Generates a high-definition, dark-mode double-sided bi-directional horizontal bar chart
@@ -321,12 +324,12 @@ def render_gexdex_chart_image(
     cache_key = f"{symbol}_{max_dte}_{strike_range}_{img_fmt}"
     now_ts = datetime.now(timezone.utc).timestamp()
 
-    if cache_key in _CHART_CACHE:
+    if not force_refresh and cache_key in _CHART_CACHE:
         cached_time, cached_bytes = _CHART_CACHE[cache_key]
         if (now_ts - cached_time) < CACHE_TTL_SECONDS:
             return cached_bytes
 
-    raw_data = fetch_raw_data_for_ticker(symbol, max_dte=max_dte, strike_range=strike_range)
+    raw_data = fetch_raw_data_for_ticker(symbol, max_dte=max_dte, strike_range=strike_range, force_refresh=force_refresh)
     df_raw = convert_raw_to_df(raw_data) if (raw_data and convert_raw_to_df) else None
 
     if raw_data and df_raw is not None and not df_raw.empty:
