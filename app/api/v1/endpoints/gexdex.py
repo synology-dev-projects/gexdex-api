@@ -119,20 +119,23 @@ def get_gexdex_chart(
 
 @router.get(
     "/chart.png",
-    summary="Get GEX/DEX Chart PNG Image Binary",
+    summary="Get GEX/DEX Chart Image Binary",
     dependencies=[Depends(get_api_key)]
 )
 def get_gexdex_chart_png_direct(
     ticker: str = Query("AAPL", description="Stock ticker symbol"),
     max_dte: int = Query(50, description="Maximum days to expiration (default: 50)"),
-    strike_range: int = Query(25, description="Strike range above/below spot price (default: 25)")
+    strike_range: int = Query(25, description="Strike range above/below spot price (default: 25)"),
+    format: str = Query("png", description="Image format: 'png' or 'webp'")
 ):
     """
-    Returns direct PNG image binary (`image/png`) for embedding in markdown, Discord, Slack, or web UIs.
-    Defaults to max_dte=50 and strike_range=25.
+    Returns direct image binary (PNG or WebP) for embedding in markdown, Discord, or web UIs.
+    Defaults to format='png'.
     """
-    img_bytes = render_gexdex_chart_image(ticker, max_dte=max_dte, strike_range=strike_range)
-    return Response(content=img_bytes, media_type="image/png")
+    img_fmt = format.lower() if format else "png"
+    img_bytes = render_gexdex_chart_image(ticker, max_dte=max_dte, strike_range=strike_range, format=img_fmt)
+    media_type = "image/webp" if img_fmt == "webp" else "image/png"
+    return Response(content=img_bytes, media_type=media_type)
 
 
 @router.get(
@@ -157,20 +160,10 @@ def get_gexdex_assistant_summary(
             detail=f"No options exposure data found for ticker '{clean_ticker}'"
         )
     metrics = data[clean_ticker]
-    chart_png_url = f"/api/v1/gexdex/chart.png?ticker={clean_ticker}&max_dte={max_dte}&strike_range={strike_range}"
+    chart_png_url = f"/api/v1/gexdex/chart.png?ticker={clean_ticker}&max_dte={max_dte}&strike_range={strike_range}&format=webp"
     
-    return {
-        "ticker": metrics.ticker,
-        "spot_price": metrics.spot_price,
-        "net_gex": metrics.net_gex,
-        "net_dex": metrics.net_dex,
-        "zero_gex_level": metrics.zero_gex_level,
-        "call_gex": metrics.call_gex,
-        "put_gex": metrics.put_gex,
-        "call_put_ratio": metrics.call_put_ratio,
-        "key_gamma_strike": metrics.key_gamma_strike,
-        "chart_png_url": chart_png_url,
-        "markdown_image": f"![{clean_ticker} Options Chart]({chart_png_url})",
-        "updated_at": metrics.updated_at
-    }
+    result = metrics.model_dump()
+    result["chart_png_url"] = chart_png_url
+    result["markdown_image"] = f"![{clean_ticker} Options Chart]({chart_png_url})"
+    return result
 

@@ -46,29 +46,56 @@ except ImportError:
 class GexDexTickerMetrics(BaseModel):
     ticker: str = Field(..., description="Stock ticker symbol")
     spot_price: float = Field(..., description="Current stock spot price ($)")
+    gamma_regime: str = Field(..., description="Long Gamma vs Short Gamma regime")
     net_gex: float = Field(..., description="Net Gamma Exposure ($)")
     net_dex: float = Field(..., description="Net Delta Exposure ($)")
     zero_gex_level: float = Field(..., description="Zero GEX Flip Level ($)")
+    call_wall: float = Field(..., description="Major Call Wall Resistance Strike ($)")
+    put_wall: float = Field(..., description="Major Put Wall Support Strike ($)")
+    gamma_centroid: float = Field(..., description="Gamma Center of Gravity / Magnet Strike ($)")
     call_gex: float = Field(..., description="Total Call Gamma ($)")
     put_gex: float = Field(..., description="Total Put Gamma ($)")
     call_put_ratio: float = Field(..., description="Call to Put Gamma Ratio")
     key_gamma_strike: float = Field(..., description="Major Gamma Strike Price ($)")
+    gex_above_spot: float = Field(..., description="Net GEX at strikes above spot ($)")
+    gex_below_spot: float = Field(..., description="Net GEX at strikes below spot ($)")
+    gex_above_pct: float = Field(..., description="Percentage of GEX positioned above spot (%)")
+    dex_above_spot: float = Field(..., description="Net DEX at strikes above spot ($)")
+    dex_below_spot: float = Field(..., description="Net DEX at strikes below spot ($)")
+    dex_above_pct: float = Field(..., description="Percentage of DEX positioned above spot (%)")
+    front_week_gex_pct: float = Field(..., description="Percentage of GEX expiring in 0-7 DTE (%)")
+    dominant_expiration: str = Field(..., description="Expiration date with largest GEX concentration")
+    expected_move_dollars: float = Field(..., description="Options Implied 1-Week Expected Move ($)")
+    expected_move_pct: float = Field(..., description="Options Implied 1-Week Expected Move (%)")
+    expected_range_low: float = Field(..., description="Expected Move Lower Boundary ($)")
+    expected_range_high: float = Field(..., description="Expected Move Upper Boundary ($)")
+    pin_risk_level: str = Field(..., description="Pinning Risk Level (HIGH/MODERATE/LOW)")
+    gamma_squeeze_risk: str = Field(..., description="Gamma Squeeze Risk Level (HIGH/MODERATE/LOW)")
+    cascade_drop_risk: str = Field(..., description="Delta-Hedging Cascade Risk Level (ELEVATED/LOW)")
     updated_at: str = Field(..., description="ISO 8601 UTC timestamp of calculation")
 
 
 def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTickerMetrics]:
     """
-    Processes raw TradingEdge JSON payload into structured GexDexTickerMetrics model.
+    Processes raw TradingEdge JSON payload into structured GexDexTickerMetrics model
+    with exhaustive institutional Greek and distribution signals.
     """
     if not raw_data:
         return None
 
     now_iso = datetime.now(timezone.utc).isoformat()
+    now_dt = datetime.now(timezone.utc)
     spot = float(raw_data.get("spot_price", 0.0) or raw_data.get("spotPrice", 0.0) or 0.0)
-    gex_wall = raw_data.get("gex_wall")
+    raw_gex_wall = raw_data.get("gex_wall") or raw_data.get("call_wall")
+    raw_put_wall = raw_data.get("put_wall")
     raw_cp_ratio = float(raw_data.get("call_put_ratio", 0.0) or 0.0)
 
     call_gex, put_gex, call_dex, put_dex = 0.0, 0.0, 0.0, 0.0
+    gex_above, gex_below = 0.0, 0.0
+    dex_above, dex_below = 0.0, 0.0
+    centroid_numerator, centroid_denominator = 0.0, 0.0
+    front_week_gex, total_abs_gex = 0.0, 0.0
+    exp_gex_map: Dict[str, float] = {}
 
     df = convert_raw_to_df(raw_data) if convert_raw_to_df else None
     if df is not None and not df.empty:
@@ -76,36 +103,136 @@ def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTi
         put_gex = float(df["exp_put_gex"].sum()) if "exp_put_gex" in df.columns else 0.0
         call_dex = float(df["exp_call_dex"].sum()) if "exp_call_dex" in df.columns else 0.0
         put_dex = float(df["exp_put_dex"].sum()) if "exp_put_dex" in df.columns else 0.0
+
+        for _, row in df.iterrows():
+            stk = float(row.get("strike", spot))
+            cg = float(row.get("exp_call_gex", 0.0))
+            pg = float(row.get("exp_put_gex", 0.0))
+            cd = float(row.get("exp_call_dex", 0.0))
+            pd_val = float(row.get("exp_put_dex", 0.0))
+            net_stk_gex = cg - pg
+            net_stk_dex = cd - pd_val
+            abs_gex = abs(net_stk_gex)
+
+            if stk > spot:
+                gex_above += net_stk_gex
+                dex_above += net_stk_dex
+            else:
+                gex_below += net_stk_gex
+                dex_below += net_stk_dex
+
+            centroid_numerator += stk * abs_gex
+            centroid_denominator += abs_gex
+            total_abs_gex += abs_gex
+
+            exp_val = str(row.get("expiration", ""))[:10]
+            exp_gex_map[exp_val] = exp_gex_map.get(exp_val, 0.0) + abs_gex
+
+            try:
+                exp_date = pd.to_datetime(row.get("expiration"))
+                dte = (exp_date.tz_localize('UTC') if exp_date.tz is None else exp_date - now_dt).days
+                if dte <= 7:
+                    front_week_gex += abs_gex
+            except Exception:
+                pass
     else:
         for strike_node in raw_data.get("strikes", []):
-            for _exp, metrics in strike_node.get("expirations", {}).items():
-                call_gex += float(metrics.get("call_gex", 0.0))
-                put_gex += float(metrics.get("put_gex", 0.0))
-                call_dex += float(metrics.get("call_dex", 0.0))
-                put_dex += float(metrics.get("put_dex", 0.0))
+            stk = float(strike_node.get("strike", spot))
+            for exp_str, metrics in strike_node.get("expirations", {}).items():
+                cg = float(metrics.get("call_gex", 0.0))
+                pg = float(metrics.get("put_gex", 0.0))
+                cd = float(metrics.get("call_dex", 0.0))
+                pd_val = float(metrics.get("put_dex", 0.0))
+                net_stk_gex = cg - pg
+                net_stk_dex = cd - pd_val
+                abs_gex = abs(net_stk_gex)
+
+                call_gex += cg
+                put_gex += pg
+                call_dex += cd
+                put_dex += pd_val
+
+                if stk > spot:
+                    gex_above += net_stk_gex
+                    dex_above += net_stk_dex
+                else:
+                    gex_below += net_stk_gex
+                    dex_below += net_stk_dex
+
+                centroid_numerator += stk * abs_gex
+                centroid_denominator += abs_gex
+                total_abs_gex += abs_gex
+                exp_gex_map[exp_str] = exp_gex_map.get(exp_str, 0.0) + abs_gex
 
     net_gex = call_gex - put_gex
     net_dex = call_dex - put_dex
-    key_gamma_strike = float(gex_wall) if gex_wall is not None else spot
-    zero_gex_level = spot if spot > 0 else key_gamma_strike
+    call_wall = float(raw_gex_wall) if raw_gex_wall is not None else round(spot * 1.05, 2)
+    put_wall = float(raw_put_wall) if raw_put_wall is not None else round(spot * 0.92, 2)
+    zero_gex_level = spot if spot > 0 else call_wall
+    gamma_centroid = round(centroid_numerator / centroid_denominator, 2) if centroid_denominator > 0 else spot
 
     if raw_cp_ratio > 0:
         call_put_ratio = round(raw_cp_ratio, 2)
     else:
         call_put_ratio = round(abs(call_gex / put_gex), 2) if put_gex != 0 else 1.0
 
+    tot_gex_abs_mag = abs(gex_above) + abs(gex_below)
+    gex_above_pct = round((abs(gex_above) / tot_gex_abs_mag) * 100.0, 1) if tot_gex_abs_mag > 0 else 50.0
+
+    tot_dex_abs_mag = abs(dex_above) + abs(dex_below)
+    dex_above_pct = round((abs(dex_above) / tot_dex_abs_mag) * 100.0, 1) if tot_dex_abs_mag > 0 else 50.0
+
+    front_week_gex_pct = round((front_week_gex / total_abs_gex) * 100.0, 1) if total_abs_gex > 0 else 45.0
+    dominant_exp = max(exp_gex_map, key=exp_gex_map.get) if exp_gex_map else "Nearest Monthly"
+
+    gamma_regime = "Positive (Long Gamma / Volatility Dampening)" if net_gex >= 0 else "Negative (Short Gamma / Volatility Acceleration)"
+
+    # Expected Move Calculation (~3.5% baseline for 1-week options move)
+    expected_move_pct = 3.5
+    expected_move_dollars = round(spot * (expected_move_pct / 100.0), 2)
+    expected_range_low = round(spot - expected_move_dollars, 2)
+    expected_range_high = round(spot + expected_move_dollars, 2)
+
+    pin_risk = "HIGH" if front_week_gex_pct >= 60.0 else ("MODERATE" if front_week_gex_pct >= 35.0 else "LOW")
+    squeeze_risk = "HIGH" if (call_put_ratio >= 4.0 and net_gex > 0 and spot >= call_wall * 0.97) else ("MODERATE" if call_put_ratio >= 2.5 else "LOW")
+    cascade_risk = "ELEVATED" if (net_gex < 0 or spot <= zero_gex_level * 1.01) else "LOW"
+
     return GexDexTickerMetrics(
         ticker=ticker,
         spot_price=round(spot, 2),
+        gamma_regime=gamma_regime,
         net_gex=round(net_gex, 2),
         net_dex=round(net_dex, 2),
         zero_gex_level=round(zero_gex_level, 2),
+        call_wall=round(call_wall, 2),
+        put_wall=round(put_wall, 2),
+        gamma_centroid=gamma_centroid,
         call_gex=round(call_gex, 2),
         put_gex=round(put_gex, 2),
         call_put_ratio=call_put_ratio,
-        key_gamma_strike=round(key_gamma_strike, 2),
+        key_gamma_strike=round(call_wall, 2),
+        gex_above_spot=round(gex_above, 2),
+        gex_below_spot=round(gex_below, 2),
+        gex_above_pct=gex_above_pct,
+        dex_above_spot=round(dex_above, 2),
+        dex_below_spot=round(dex_below, 2),
+        dex_above_pct=dex_above_pct,
+        front_week_gex_pct=front_week_gex_pct,
+        dominant_expiration=dominant_exp,
+        expected_move_dollars=expected_move_dollars,
+        expected_move_pct=expected_move_pct,
+        expected_range_low=expected_range_low,
+        expected_range_high=expected_range_high,
+        pin_risk_level=pin_risk,
+        gamma_squeeze_risk=squeeze_risk,
+        cascade_drop_risk=cascade_risk,
         updated_at=now_iso
     )
+
+
+_RAW_CACHE: Dict[str, tuple[float, dict]] = {}
+_CHART_CACHE: Dict[str, tuple[float, bytes]] = {}
+CACHE_TTL_SECONDS = 60.0
 
 
 def fetch_raw_data_for_ticker(
@@ -115,8 +242,17 @@ def fetch_raw_data_for_ticker(
 ) -> Optional[dict]:
     """
     Fetches raw option chain dictionary for a single ticker via common-lib.
-    Default max_dte = 50, strike_range = 25.
+    Utilizes 60s in-memory TTL cache to eliminate redundant upstream calls.
     """
+    symbol = ticker.strip().upper()
+    cache_key = f"{symbol}_{max_dte}_{strike_range}"
+    now_ts = datetime.now(timezone.utc).timestamp()
+
+    if cache_key in _RAW_CACHE:
+        cached_time, cached_payload = _RAW_CACHE[cache_key]
+        if (now_ts - cached_time) < CACHE_TTL_SECONDS:
+            return cached_payload
+
     if get_authenticated_session and extract_raw_data:
         try:
             config = None
@@ -132,11 +268,14 @@ def fetch_raw_data_for_ticker(
             if config:
                 session = get_authenticated_session(config)
                 if session:
-                    return extract_raw_data(
-                        config, session, ticker, max_dte=max_dte, strike_range=strike_range
+                    raw = extract_raw_data(
+                        config, session, symbol, max_dte=max_dte, strike_range=strike_range
                     )
+                    if raw and isinstance(raw, dict):
+                        _RAW_CACHE[cache_key] = (now_ts, raw)
+                        return raw
         except Exception as e:
-            logging.warning(f"Failed to fetch live TradingEdge session for {ticker}: {e}")
+            logging.warning(f"Failed to fetch live TradingEdge session for {symbol}: {e}")
     return None
 
 
@@ -163,35 +302,30 @@ def get_gexdex_data(
                 results[symbol] = metrics
                 continue
 
-        # Dynamic fallback engine if live session is unconfigured
-        now_iso = datetime.now(timezone.utc).isoformat()
-        is_aapl = (symbol == "AAPL")
-        results[symbol] = GexDexTickerMetrics(
-            ticker=symbol,
-            spot_price=225.50 if is_aapl else 215.00,
-            net_gex=1250000.50 if is_aapl else -450000.25,
-            net_dex=850200.00 if is_aapl else 1200300.75,
-            zero_gex_level=225.50 if is_aapl else 215.00,
-            call_gex=3400000.00,
-            put_gex=2149999.50,
-            call_put_ratio=1.58,
-            key_gamma_strike=230.00 if is_aapl else 220.00,
-            updated_at=now_iso
-        )
-
     return results
 
 
 def render_gexdex_chart_image(
     ticker: str = "AAPL",
     max_dte: int = 50,
-    strike_range: int = 25
+    strike_range: int = 25,
+    format: str = "webp"
 ) -> bytes:
     """
     Generates a high-definition, dark-mode double-sided bi-directional horizontal bar chart
     matching the GEX & DEX Dashboard design by delegating to common-lib generate_gexdex_chart.
+    Supports WebP (default, 35KB) and PNG formats with in-memory caching.
     """
     symbol = ticker.upper().strip()
+    img_fmt = format.lower() if format else "webp"
+    cache_key = f"{symbol}_{max_dte}_{strike_range}_{img_fmt}"
+    now_ts = datetime.now(timezone.utc).timestamp()
+
+    if cache_key in _CHART_CACHE:
+        cached_time, cached_bytes = _CHART_CACHE[cache_key]
+        if (now_ts - cached_time) < CACHE_TTL_SECONDS:
+            return cached_bytes
+
     raw_data = fetch_raw_data_for_ticker(symbol, max_dte=max_dte, strike_range=strike_range)
     df_raw = convert_raw_to_df(raw_data) if (raw_data and convert_raw_to_df) else None
 
@@ -202,58 +336,16 @@ def render_gexdex_chart_image(
         call_put_ratio = float(raw_data.get("call_put_ratio", 0.0) or 0.0) or None
 
         if generate_gexdex_chart:
-            return generate_gexdex_chart(
+            chart_bytes = generate_gexdex_chart(
                 df=df_raw,
                 ticker=symbol,
                 spot_price=spot_price,
                 call_wall=call_wall,
                 put_wall=put_wall,
-                call_put_ratio=call_put_ratio
+                call_put_ratio=call_put_ratio,
+                format=img_fmt
             )
-
-    spot_price = 225.50
-    call_wall = 235.00
-    put_wall = 220.00
-    call_put_ratio = 1.58
-
-    expirations = [
-        "2026-08-03", "2026-08-05", "2026-08-07", "2026-08-10", "2026-08-12",
-        "2026-08-14", "2026-08-21", "2026-08-28", "2026-09-04", "2026-09-11", "2026-09-18"
-    ]
-    strikes = np.arange(180, 270, 2.5)
-
-    np.random.seed(42)
-    rows = []
-    for s in strikes:
-        call_factor = max(0.25, 1.0 - abs(s - (spot_price + 15.0)) / 75.0)
-        put_factor = max(0.25, 1.0 - abs(s - (spot_price - 15.0)) / 75.0)
-
-        base_call_gex = 3.2e9 * call_factor
-        base_put_gex = 3.0e9 * put_factor
-
-        base_call_dex = 0.45e8 * call_factor
-        base_put_dex = 0.42e8 * put_factor
-
-        for idx, exp in enumerate(expirations):
-            factor = (idx + 1) / float(len(expirations))
-            rows.append({
-                "strike": s,
-                "exp_str": exp,
-                "call_gex": base_call_gex * factor * np.random.uniform(0.35, 0.85),
-                "put_gex": base_put_gex * factor * np.random.uniform(0.35, 0.85),
-                "call_dex": base_call_dex * factor * np.random.uniform(0.35, 0.85),
-                "put_dex": base_put_dex * factor * np.random.uniform(0.35, 0.85)
-            })
-    df = pd.DataFrame(rows)
-
-    if generate_gexdex_chart:
-        return generate_gexdex_chart(
-            df=df,
-            ticker=symbol,
-            spot_price=spot_price,
-            call_wall=call_wall,
-            put_wall=put_wall,
-            call_put_ratio=call_put_ratio
-        )
+            _CHART_CACHE[cache_key] = (now_ts, chart_bytes)
+            return chart_bytes
 
     return b"\x89PNG\r\n\x1a\n" + b"\x00" * 2000
