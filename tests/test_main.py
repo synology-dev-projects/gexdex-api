@@ -189,3 +189,26 @@ def test_get_gexdex_data_with_mocked_common_lib(mock_fetch):
     assert result["AAPL"].key_gamma_strike == 230.0
     mock_fetch.assert_called_once()
 
+
+def test_gexdex_strikes_endpoint():
+    """Verifies HTTP GET /api/v1/gexdex/strikes returns granular strike distribution JSON."""
+    response = client.get(
+        "/api/v1/gexdex/strikes?ticker=AAPL",
+        headers={"X-API-Key": TEST_API_KEY}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ticker"] == "AAPL"
+    assert "spot_price" in data
+    assert "strikes" in data
+    assert len(data["strikes"]) >= 2
+    assert "call_wall" in data
+    assert "put_wall" in data
+    assert "call_put_ratio" in data
+    first_strike = data["strikes"][0]
+    assert "strike" in first_strike
+    assert "call_gex" in first_strike
+    assert "put_gex" in first_strike
+    assert "exp_gex" in first_strike
+
+

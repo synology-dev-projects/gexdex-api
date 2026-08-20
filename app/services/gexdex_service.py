@@ -79,6 +79,34 @@ class GexDexTickerMetrics(BaseModel):
     updated_at: str = Field(..., description="ISO 8601 UTC timestamp of calculation")
 
 
+class StrikeDetail(BaseModel):
+    strike: float
+    call_gex: float
+    put_gex: float
+    call_dex: float
+    put_dex: float
+    net_gex: float
+    net_dex: float
+    exp_gex: Dict[str, Dict[str, float]] = Field(default_factory=dict)
+    exp_dex: Dict[str, Dict[str, float]] = Field(default_factory=dict)
+
+
+class StrikeDistributionResponse(BaseModel):
+    ticker: str
+    spot_price: float
+    call_wall: float
+    put_wall: float
+    zero_gex_level: float
+    gamma_centroid: float
+    call_put_ratio: float
+    gamma_regime: str
+    net_gex: float
+    net_dex: float
+    expirations: List[str]
+    strikes: List[StrikeDetail]
+    updated_at: str
+
+
 def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTickerMetrics]:
     """
     Processes raw TradingEdge JSON payload into structured GexDexTickerMetrics model
@@ -421,3 +449,163 @@ def render_gexdex_chart_image(
     except Exception as e:
         logging.error(f"Error generating fallback image for {symbol}: {e}")
         return b""
+
+
+def get_strike_distribution(
+    ticker: str,
+    max_dte: int = 50,
+    strike_range: int = 25,
+    force_refresh: bool = False
+) -> StrikeDistributionResponse:
+    """
+    Returns granular strike-level GEX and DEX distributions formatted for client-side rendering.
+    """
+    symbol = ticker.strip().upper()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    raw_data = fetch_raw_data_for_ticker(symbol, max_dte=max_dte, strike_range=strike_range, force_refresh=force_refresh)
+    metrics = calculate_metrics_from_raw(symbol, raw_data) if raw_data else None
+
+    spot_price = metrics.spot_price if metrics else 0.0
+    call_wall = metrics.call_wall if metrics else 0.0
+    put_wall = metrics.put_wall if metrics else 0.0
+    zero_gex_level = metrics.zero_gex_level if metrics else 0.0
+    gamma_centroid = metrics.gamma_centroid if metrics else 0.0
+    call_put_ratio = metrics.call_put_ratio if metrics else 1.0
+    gamma_regime = metrics.gamma_regime if metrics else "Neutral"
+    net_gex = metrics.net_gex if metrics else 0.0
+    net_dex = metrics.net_dex if metrics else 0.0
+
+    df_raw = convert_raw_to_df(raw_data) if (raw_data and convert_raw_to_df) else None
+    
+    if (df_raw is None or df_raw.empty) and raw_data and raw_data.get("strikes"):
+        # Fallback parser for raw json dictionary format
+        raw_strikes = raw_data.get("strikes", [])
+        expirations_set = set()
+        strike_details: List[StrikeDetail] = []
+        
+        for node in raw_strikes:
+            stk = float(node.get("strike", spot_price))
+            cg_tot, pg_tot, cd_tot, pd_tot = 0.0, 0.0, 0.0, 0.0
+            exp_gex_dict = {}
+            exp_dex_dict = {}
+            
+            for exp_date, exp_metrics in node.get("expirations", {}).items():
+                expirations_set.add(exp_date)
+                cg = float(exp_metrics.get("call_gex", 0.0))
+                pg = float(exp_metrics.get("put_gex", 0.0))
+                cd = float(exp_metrics.get("call_dex", 0.0))
+                pd_val = float(exp_metrics.get("put_dex", 0.0))
+                cg_tot += cg
+                pg_tot += pg
+                cd_tot += cd
+                pd_tot += pd_val
+                if cg != 0 or pg != 0:
+                    exp_gex_dict[exp_date] = {"call": round(cg, 2), "put": round(pg, 2)}
+                if cd != 0 or pd_val != 0:
+                    exp_dex_dict[exp_date] = {"call": round(cd, 2), "put": round(pd_val, 2)}
+
+            strike_details.append(StrikeDetail(
+                strike=stk,
+                call_gex=round(cg_tot, 2),
+                put_gex=round(pg_tot, 2),
+                call_dex=round(cd_tot, 2),
+                put_dex=round(pd_tot, 2),
+                net_gex=round(cg_tot - pg_tot, 2),
+                net_dex=round(cd_tot - pd_tot, 2),
+                exp_gex=exp_gex_dict,
+                exp_dex=exp_dex_dict
+            ))
+            
+        return StrikeDistributionResponse(
+            ticker=symbol,
+            spot_price=spot_price,
+            call_wall=call_wall,
+            put_wall=put_wall,
+            zero_gex_level=zero_gex_level,
+            gamma_centroid=gamma_centroid,
+            call_put_ratio=call_put_ratio,
+            gamma_regime=gamma_regime,
+            net_gex=net_gex,
+            net_dex=net_dex,
+            expirations=sorted(list(expirations_set))[:11],
+            strikes=sorted(strike_details, key=lambda s: s.strike),
+            updated_at=now_iso
+        )
+
+    if df_raw is None or df_raw.empty:
+        return StrikeDistributionResponse(
+            ticker=symbol,
+            spot_price=spot_price,
+            call_wall=call_wall,
+            put_wall=put_wall,
+            zero_gex_level=zero_gex_level,
+            gamma_centroid=gamma_centroid,
+            call_put_ratio=call_put_ratio,
+            gamma_regime=gamma_regime,
+            net_gex=net_gex,
+            net_dex=net_dex,
+            expirations=[],
+            strikes=[],
+            updated_at=now_iso
+        )
+
+    df_copy = df_raw.copy()
+    if 'exp_str' not in df_copy.columns:
+        if 'expiration' in df_copy.columns:
+            df_copy['exp_str'] = pd.to_datetime(df_copy['expiration']).dt.strftime('%Y-%m-%d')
+        else:
+            df_copy['exp_str'] = 'Nearest'
+
+    expirations = sorted(df_copy['exp_str'].unique())[:11]
+    strikes_unique = sorted(df_copy['strike'].unique())
+    strike_details: List[StrikeDetail] = []
+
+    for stk in strikes_unique:
+        sub = df_copy[df_copy['strike'] == stk]
+        total_cg = float(sub['exp_call_gex'].sum()) if 'exp_call_gex' in sub.columns else 0.0
+        total_pg = float(sub['exp_put_gex'].sum()) if 'exp_put_gex' in sub.columns else 0.0
+        total_cd = float(sub['exp_call_dex'].sum()) if 'exp_call_dex' in sub.columns else 0.0
+        total_pd = float(sub['exp_put_dex'].sum()) if 'exp_put_dex' in sub.columns else 0.0
+
+        exp_gex_dict: Dict[str, Dict[str, float]] = {}
+        exp_dex_dict: Dict[str, Dict[str, float]] = {}
+
+        for exp in expirations:
+            exp_sub = sub[sub['exp_str'] == exp]
+            if not exp_sub.empty:
+                cg = float(exp_sub['exp_call_gex'].iloc[0]) if 'exp_call_gex' in exp_sub.columns else 0.0
+                pg = float(exp_sub['exp_put_gex'].iloc[0]) if 'exp_put_gex' in exp_sub.columns else 0.0
+                cd = float(exp_sub['exp_call_dex'].iloc[0]) if 'exp_call_dex' in exp_sub.columns else 0.0
+                pd_val = float(exp_sub['exp_put_dex'].iloc[0]) if 'exp_put_dex' in exp_sub.columns else 0.0
+                if cg != 0 or pg != 0:
+                    exp_gex_dict[exp] = {"call": round(cg, 2), "put": round(pg, 2)}
+                if cd != 0 or pd_val != 0:
+                    exp_dex_dict[exp] = {"call": round(cd, 2), "put": round(pd_val, 2)}
+
+        strike_details.append(StrikeDetail(
+            strike=float(stk),
+            call_gex=round(total_cg, 2),
+            put_gex=round(total_pg, 2),
+            call_dex=round(total_cd, 2),
+            put_dex=round(total_pd, 2),
+            net_gex=round(total_cg - total_pg, 2),
+            net_dex=round(total_cd - total_pd, 2),
+            exp_gex=exp_gex_dict,
+            exp_dex=exp_dex_dict
+        ))
+
+    return StrikeDistributionResponse(
+        ticker=symbol,
+        spot_price=spot_price,
+        call_wall=call_wall,
+        put_wall=put_wall,
+        zero_gex_level=zero_gex_level,
+        gamma_centroid=gamma_centroid,
+        call_put_ratio=call_put_ratio,
+        gamma_regime=gamma_regime,
+        net_gex=net_gex,
+        net_dex=net_dex,
+        expirations=expirations,
+        strikes=strike_details,
+        updated_at=now_iso
+    )
