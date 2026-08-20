@@ -562,10 +562,10 @@ def get_strike_distribution(
 
     for stk in strikes_unique:
         sub = df_copy[df_copy['strike'] == stk]
-        total_cg = float(sub['exp_call_gex'].sum()) if 'exp_call_gex' in sub.columns else 0.0
-        total_pg = float(sub['exp_put_gex'].sum()) if 'exp_put_gex' in sub.columns else 0.0
-        total_cd = float(sub['exp_call_dex'].sum()) if 'exp_call_dex' in sub.columns else 0.0
-        total_pd = float(sub['exp_put_dex'].sum()) if 'exp_put_dex' in sub.columns else 0.0
+        total_cg = float(abs(sub['exp_call_gex']).sum()) if 'exp_call_gex' in sub.columns else 0.0
+        total_pg = float(abs(sub['exp_put_gex']).sum()) if 'exp_put_gex' in sub.columns else 0.0
+        total_cd = float(abs(sub['exp_call_dex']).sum()) if 'exp_call_dex' in sub.columns else 0.0
+        total_pd = float(abs(sub['exp_put_dex']).sum()) if 'exp_put_dex' in sub.columns else 0.0
 
         exp_gex_dict: Dict[str, Dict[str, float]] = {}
         exp_dex_dict: Dict[str, Dict[str, float]] = {}
@@ -573,10 +573,10 @@ def get_strike_distribution(
         for exp in expirations:
             exp_sub = sub[sub['exp_str'] == exp]
             if not exp_sub.empty:
-                cg = float(exp_sub['exp_call_gex'].iloc[0]) if 'exp_call_gex' in exp_sub.columns else 0.0
-                pg = float(exp_sub['exp_put_gex'].iloc[0]) if 'exp_put_gex' in exp_sub.columns else 0.0
-                cd = float(exp_sub['exp_call_dex'].iloc[0]) if 'exp_call_dex' in exp_sub.columns else 0.0
-                pd_val = float(exp_sub['exp_put_dex'].iloc[0]) if 'exp_put_dex' in exp_sub.columns else 0.0
+                cg = abs(float(exp_sub['exp_call_gex'].iloc[0])) if 'exp_call_gex' in exp_sub.columns else 0.0
+                pg = abs(float(exp_sub['exp_put_gex'].iloc[0])) if 'exp_put_gex' in exp_sub.columns else 0.0
+                cd = abs(float(exp_sub['exp_call_dex'].iloc[0])) if 'exp_call_dex' in exp_sub.columns else 0.0
+                pd_val = abs(float(exp_sub['exp_put_dex'].iloc[0])) if 'exp_put_dex' in exp_sub.columns else 0.0
                 if cg != 0 or pg != 0:
                     exp_gex_dict[exp] = {"call": round(cg, 2), "put": round(pg, 2)}
                 if cd != 0 or pd_val != 0:
