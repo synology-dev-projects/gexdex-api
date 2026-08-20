@@ -128,8 +128,14 @@ def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTi
     centroid_numerator, centroid_denominator = 0.0, 0.0
     front_week_gex, total_abs_gex = 0.0, 0.0
     exp_gex_map: Dict[str, float] = {}
+    strike_gex_map: Dict[float, float] = {}
 
-    df = convert_raw_to_df(raw_data) if convert_raw_to_df else None
+    df = None
+    if convert_raw_to_df:
+        try:
+            df = convert_raw_to_df(raw_data)
+        except Exception:
+            df = None
     if df is not None and not df.empty:
         call_gex = float(df["exp_call_gex"].sum()) if "exp_call_gex" in df.columns else 0.0
         put_gex = float(df["exp_put_gex"].sum()) if "exp_put_gex" in df.columns else 0.0
@@ -145,6 +151,8 @@ def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTi
             net_stk_gex = cg - pg
             net_stk_dex = cd - pd_val
             abs_gex = abs(net_stk_gex)
+
+            strike_gex_map[stk] = strike_gex_map.get(stk, 0.0) + net_stk_gex
 
             if stk > spot:
                 gex_above += net_stk_gex
@@ -179,6 +187,8 @@ def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTi
                 net_stk_dex = cd - pd_val
                 abs_gex = abs(net_stk_gex)
 
+                strike_gex_map[stk] = strike_gex_map.get(stk, 0.0) + net_stk_gex
+
                 call_gex += cg
                 put_gex += pg
                 call_dex += cd
@@ -200,7 +210,34 @@ def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTi
     net_dex = call_dex - put_dex
     call_wall = float(raw_gex_wall) if raw_gex_wall is not None else round(spot * 1.05, 2)
     put_wall = float(raw_put_wall) if raw_put_wall is not None else round(spot * 0.92, 2)
-    zero_gex_level = spot if spot > 0 else call_wall
+
+    # Exact Zero Gamma Flip Level via cumulative net gamma zero-crossing
+    zero_gex_level = spot
+    if strike_gex_map:
+        sorted_stks = sorted(strike_gex_map.keys())
+        cum_gex = 0.0
+        prev_stk = None
+        prev_cum = None
+        flip_found = False
+
+        for stk_val in sorted_stks:
+            cum_gex += strike_gex_map[stk_val]
+            if prev_cum is not None and ((prev_cum <= 0 and cum_gex > 0) or (prev_cum >= 0 and cum_gex < 0)):
+                delta_cum = cum_gex - prev_cum
+                if delta_cum != 0:
+                    t = (0.0 - prev_cum) / delta_cum
+                    zero_gex_level = prev_stk + t * (stk_val - prev_stk)
+                    flip_found = True
+                    break
+            prev_stk = stk_val
+            prev_cum = cum_gex
+
+        if not flip_found:
+            if cum_gex > 0:
+                zero_gex_level = round(put_wall * 0.96, 2)
+            else:
+                zero_gex_level = round(call_wall * 1.04, 2)
+
     gamma_centroid = round(centroid_numerator / centroid_denominator, 2) if centroid_denominator > 0 else spot
 
     if raw_cp_ratio > 0:

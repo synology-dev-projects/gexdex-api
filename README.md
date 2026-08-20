@@ -50,8 +50,14 @@ gexdex-api/
 | `GET` | `/health` | Container health check | No |
 | `GET` | `/api/v1/gexdex?tickers=AAPL,TSLA` | Real-time JSON GEX & DEX metrics for multiple tickers | Yes (`X-API-Key`) |
 | `GET` | `/api/v1/gexdex/assistant-summary?tickers=INTC,BLDP` | AI Assistant summary with batch data & background pre-warming | Yes (`X-API-Key`) |
+| `GET` | `/api/v1/gexdex/strikes?ticker=SPY` | Granular strike distribution with multi-expiration matrix & Zero Gamma Flip | Yes (`X-API-Key`) |
 | `GET` | `/api/v1/gexdex/chart?ticker=AAOI` | Dark-mode HTML dashboard container | Yes (`X-API-Key`) |
 | `GET` | `/api/v1/gexdex/chart.png?ticker=AAOI&format=webp` | Direct WebP or PNG binary image output | Yes (`X-API-Key`) |
+
+### Quantitative Metrics Computed:
+- **Zero Gamma Flip Point**: Exact price level calculated via linear interpolation of cumulative net gamma ($S(K) = 0$). Above this point, dealers are long gamma (volatility dampening); below, dealers are short gamma (volatility acceleration).
+- **Call Wall & Put Wall**: Strikes with the largest positive Call GEX and negative Put GEX.
+- **Gamma Centroid**: Weighted average strike price of aggregate options gamma.
 
 ---
 

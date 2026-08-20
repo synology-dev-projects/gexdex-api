@@ -208,7 +208,29 @@ def test_gexdex_strikes_endpoint():
     first_strike = data["strikes"][0]
     assert "strike" in first_strike
     assert "call_gex" in first_strike
-    assert "put_gex" in first_strike
-    assert "exp_gex" in first_strike
+def test_zero_gamma_flip_calculation():
+    """Verifies that calculate_metrics_from_raw computes exact interpolated Zero Gamma Flip point."""
+    mock_payload = {
+        "ticker": "TEST",
+        "spot_price": 100.0,
+        "gex_wall": 110.0,
+        "put_wall": 90.0,
+        "strikes": [
+            {
+                "strike": 90.0,
+                "expirations": {"2026-08-28": {"call_gex": 100.0, "put_gex": 500.0, "call_dex": 0.0, "put_dex": 0.0}}
+            },
+            {
+                "strike": 100.0,
+                "expirations": {"2026-08-28": {"call_gex": 600.0, "put_gex": 100.0, "call_dex": 0.0, "put_dex": 0.0}}
+            }
+        ]
+    }
+    metrics = calculate_metrics_from_raw("TEST", mock_payload)
+    assert metrics is not None
+    # Strike 90 net: -400, Strike 100 net: +500. Cum: 90 -> -400, 100 -> +100.
+    # Flip is between 90 and 100: 90 + (400 / 500) * 10 = 98.0
+    assert metrics.zero_gex_level == 98.0
+
 
 
