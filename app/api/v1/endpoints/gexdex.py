@@ -6,7 +6,9 @@ from fastapi.responses import Response, HTMLResponse
 from app.config import get_api_key
 from app.services.gexdex_service import (
     GexDexTickerMetrics,
+    StrikeDistributionResponse,
     get_gexdex_data,
+    get_strike_distribution,
     render_gexdex_chart_image,
     prewarm_chart_cache
 )
@@ -39,6 +41,31 @@ def read_gexdex(
         )
     
     return get_gexdex_data(ticker_list, max_dte=max_dte, strike_range=strike_range)
+
+
+@router.get(
+    "/strikes",
+    response_model=StrikeDistributionResponse,
+    summary="Get Granular Strike-Level GEX/DEX Distribution for Client-Side Charts",
+    dependencies=[Depends(get_api_key)]
+)
+def read_gexdex_strikes(
+    ticker: str = Query("AAPL", description="Stock ticker symbol (e.g. AAPL, TSLA, NVDA)"),
+    max_dte: int = Query(50, description="Maximum days to expiration (default: 50)"),
+    strike_range: int = Query(25, description="Strike range above/below spot price (default: 25)"),
+    force_refresh: bool = Query(False, description="Bypass 1-hour cache and force live data fetch")
+):
+    """
+    Returns granular strike-by-strike and expiration-by-expiration GEX & DEX values (~2-4 KB JSON).
+    Enables zero-latency, 100% reliable interactive HTML5 Canvas chart rendering on mobile client.
+    """
+    clean_ticker = ticker.strip().upper()
+    return get_strike_distribution(
+        ticker=clean_ticker,
+        max_dte=max_dte,
+        strike_range=strike_range,
+        force_refresh=force_refresh
+    )
 
 
 @router.get(
@@ -195,6 +222,11 @@ def get_gexdex_assistant_summary(
         item = metrics.model_dump()
         item["chart_png_url"] = chart_png_url
         item["markdown_image"] = f"![{sym} Options Chart]({chart_png_url})"
+        
+        # Attach granular strike distribution for client-side Canvas rendering (hits RAM cache <0.1ms)
+        strike_dist = get_strike_distribution(sym, max_dte=max_dte, strike_range=strike_range, force_refresh=force_refresh)
+        item["strike_distribution"] = strike_dist.model_dump()
+        
         ticker_results[sym] = item
 
         ctx = f"Ticker {sym}: Spot ${item.get('spot_price')}, Call Wall ${item.get('call_wall')}, Put Wall ${item.get('put_wall')}, GEX Above: {item.get('gex_above_pct')}%, Front-Week GEX: {item.get('front_week_gex_pct')}%, Regime: {item.get('gamma_regime')}"
