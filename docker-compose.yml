@@ -12,7 +12,12 @@ services:
       - ${COMMON_LIB_PATH:-/volume2/homes/rachardv/git-repos/master/common-lib/common_lib}:/app/common_lib
       - ${COMMON_CONFIG_PATH:-/volume2/homes/rachardv/git-repos/master/common_config}:/app/common_config
     networks:
-      - quant-system-network
+      quant-system-network:
+        aliases:
+          - gexdex-api-prod
+          - gexdex-api
+          - gexdex-api-container
+          - gexdex-api-dev
     restart: always
 
 networks:
