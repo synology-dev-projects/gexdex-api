@@ -477,6 +477,61 @@ def get_strike_distribution(
 
     df_raw = convert_raw_to_df(raw_data) if (raw_data and convert_raw_to_df) else None
     
+    if (df_raw is None or df_raw.empty) and raw_data and raw_data.get("strikes"):
+        # Fallback parser for raw json dictionary format
+        raw_strikes = raw_data.get("strikes", [])
+        expirations_set = set()
+        strike_details: List[StrikeDetail] = []
+        
+        for node in raw_strikes:
+            stk = float(node.get("strike", spot_price))
+            cg_tot, pg_tot, cd_tot, pd_tot = 0.0, 0.0, 0.0, 0.0
+            exp_gex_dict = {}
+            exp_dex_dict = {}
+            
+            for exp_date, exp_metrics in node.get("expirations", {}).items():
+                expirations_set.add(exp_date)
+                cg = float(exp_metrics.get("call_gex", 0.0))
+                pg = float(exp_metrics.get("put_gex", 0.0))
+                cd = float(exp_metrics.get("call_dex", 0.0))
+                pd_val = float(exp_metrics.get("put_dex", 0.0))
+                cg_tot += cg
+                pg_tot += pg
+                cd_tot += cd
+                pd_tot += pd_val
+                if cg != 0 or pg != 0:
+                    exp_gex_dict[exp_date] = {"call": round(cg, 2), "put": round(pg, 2)}
+                if cd != 0 or pd_val != 0:
+                    exp_dex_dict[exp_date] = {"call": round(cd, 2), "put": round(pd_val, 2)}
+
+            strike_details.append(StrikeDetail(
+                strike=stk,
+                call_gex=round(cg_tot, 2),
+                put_gex=round(pg_tot, 2),
+                call_dex=round(cd_tot, 2),
+                put_dex=round(pd_tot, 2),
+                net_gex=round(cg_tot - pg_tot, 2),
+                net_dex=round(cd_tot - pd_tot, 2),
+                exp_gex=exp_gex_dict,
+                exp_dex=exp_dex_dict
+            ))
+            
+        return StrikeDistributionResponse(
+            ticker=symbol,
+            spot_price=spot_price,
+            call_wall=call_wall,
+            put_wall=put_wall,
+            zero_gex_level=zero_gex_level,
+            gamma_centroid=gamma_centroid,
+            call_put_ratio=call_put_ratio,
+            gamma_regime=gamma_regime,
+            net_gex=net_gex,
+            net_dex=net_dex,
+            expirations=sorted(list(expirations_set))[:11],
+            strikes=sorted(strike_details, key=lambda s: s.strike),
+            updated_at=now_iso
+        )
+
     if df_raw is None or df_raw.empty:
         return StrikeDistributionResponse(
             ticker=symbol,
