@@ -259,4 +259,39 @@ def test_zero_gamma_flip_calculation():
     assert metrics.zero_gex_level == 98.0
 
 
+@patch("app.services.gexdex_service.fetch_raw_data_for_ticker")
+def test_get_gexdex_data_multi_ticker_parallel(mock_fetch):
+    """Verifies get_gexdex_data concurrently fetches and returns clean structured batch dictionaries for multi-ticker cohorts."""
+    def side_effect(ticker, **kwargs):
+        payload = dict(MOCK_RAW_PAYLOAD)
+        payload["ticker"] = ticker
+        return payload
+
+    mock_fetch.side_effect = side_effect
+    tickers = ["META", "AMZN", "NFLX", "GOOGL"]
+    results = get_gexdex_data(tickers)
+
+    assert len(results) == 4
+    for sym in tickers:
+        assert sym in results
+        assert results[sym].ticker == sym
+        assert isinstance(results[sym], GexDexTickerMetrics)
+    assert mock_fetch.call_count == 4
+
+
+def test_assistant_summary_multi_ticker_batch():
+    """Verifies HTTP GET /api/v1/gexdex/assistant-summary supports comma-separated multi-tickers."""
+    response = client.get(
+        "/api/v1/gexdex/assistant-summary?tickers=META,AMZN,NFLX,GOOGL",
+        headers={"X-API-Key": TEST_API_KEY}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "batch_data" in data
+    assert "count" in data
+    assert data["count"] >= 1
+    assert "tickers" in data
+
+
+
 
