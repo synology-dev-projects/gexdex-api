@@ -1,11 +1,16 @@
 import os
 import sys
+import threading
 import logging
 import io
-from typing import Optional, Dict, List
+import time
+import base64
+from typing import Optional, Dict, List, Any
 from datetime import datetime, timezone
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import requests
+from requests.adapters import HTTPAdapter
 from pydantic import BaseModel, Field
 import pandas as pd
 import numpy as np
@@ -305,16 +310,76 @@ _RAW_CACHE: Dict[str, tuple[float, dict]] = {}
 _CHART_CACHE: Dict[str, tuple[float, bytes]] = {}
 CACHE_TTL_SECONDS = 3600.0
 
+_SHARED_CONFIG = None
+_SHARED_SESSION: Optional[requests.Session] = None
+_SESSION_LOCK = threading.Lock()
+
+
+def get_shared_config():
+    """Retrieves or lazily initializes shared MainConfig instance."""
+    global _SHARED_CONFIG
+    if _SHARED_CONFIG is not None:
+        return _SHARED_CONFIG
+
+    config = None
+    env_path = Path("/app/common_config/.env")
+    if env_path.exists() and MainConfig:
+        try:
+            config = MainConfig(_env_file=str(env_path))
+        except Exception as ex:
+            logging.warning(f"MainConfig(_env_file={env_path}) failed: {ex}")
+    if config is None and load_config:
+        try:
+            config = load_config()
+        except Exception as ex:
+            logging.warning(f"load_config() failed: {ex}")
+
+    _SHARED_CONFIG = config
+    return _SHARED_CONFIG
+
+
+def get_shared_session(force_refresh: bool = False) -> Optional[requests.Session]:
+    """
+    Returns a persistent, authenticated requests.Session with connection pooling (Keep-Alive)
+    to eliminate repeated TLS handshake latency across parallel multi-ticker scraping requests.
+    """
+    global _SHARED_SESSION
+    if _SHARED_SESSION is not None and not force_refresh:
+        return _SHARED_SESSION
+    with _SESSION_LOCK:
+        if _SHARED_SESSION is not None and not force_refresh:
+            return _SHARED_SESSION
+        config = get_shared_config()
+        if config and get_authenticated_session:
+            try:
+                session = get_authenticated_session(config, force_refresh=force_refresh)
+                if session:
+                    adapter = HTTPAdapter(
+                        pool_connections=16,
+                        pool_maxsize=16,
+                        max_retries=2
+                    )
+                    session.mount("https://", adapter)
+                    session.mount("http://", adapter)
+                    _SHARED_SESSION = session
+                    return _SHARED_SESSION
+            except Exception as ex:
+                logging.warning(f"Failed to initialize persistent shared session: {ex}")
+        return None
+
 
 def fetch_raw_data_for_ticker(
     ticker: str,
     max_dte: int = 50,
     strike_range: int = 25,
-    force_refresh: bool = False
+    force_refresh: bool = False,
+    session: Optional[requests.Session] = None
 ) -> Optional[dict]:
     """
     Fetches raw option chain dictionary for a single ticker via common-lib.
     Utilizes 1-hour in-memory TTL cache unless force_refresh=True.
+    Maintains a shared/reusable authenticated session with connection pooling
+    to eliminate TLS handshake latency.
     """
     symbol = ticker.strip().upper()
     cache_key = f"{symbol}_{max_dte}_{strike_range}"
@@ -325,27 +390,17 @@ def fetch_raw_data_for_ticker(
         if (now_ts - cached_time) < CACHE_TTL_SECONDS:
             return cached_payload
 
-    if get_authenticated_session and extract_raw_data:
+    if extract_raw_data:
         try:
-            config = None
-            env_path = Path("/app/common_config/.env")
-            if env_path.exists() and MainConfig:
-                try:
-                    config = MainConfig(_env_file=str(env_path))
-                except Exception as ex:
-                    logging.warning(f"MainConfig(_env_file={env_path}) failed: {ex}")
-            if config is None and load_config:
-                config = load_config()
-
-            if config:
-                session = get_authenticated_session(config, force_refresh=force_refresh)
-                if session:
-                    raw = extract_raw_data(
-                        config, session, symbol, max_dte=max_dte, strike_range=strike_range
-                    )
-                    if raw and isinstance(raw, dict):
-                        _RAW_CACHE[cache_key] = (now_ts, raw)
-                        return raw
+            config = get_shared_config()
+            active_session = session or get_shared_session(force_refresh=force_refresh)
+            if config and active_session:
+                raw = extract_raw_data(
+                    config, active_session, symbol, max_dte=max_dte, strike_range=strike_range
+                )
+                if raw and isinstance(raw, dict):
+                    _RAW_CACHE[cache_key] = (now_ts, raw)
+                    return raw
         except Exception as e:
             logging.warning(f"Failed to fetch live TradingEdge session for {symbol}: {e}")
     return None
@@ -358,16 +413,26 @@ def get_gexdex_data(
     force_refresh: bool = False
 ) -> Dict[str, GexDexTickerMetrics]:
     """
-    Retrieves GEX/DEX data in parallel across up to 8 worker threads.
+    Retrieves GEX/DEX data in parallel across worker threads using ThreadPoolExecutor(max_workers=min(len(clean_tickers), 8)).
+    Maintains a shared/reusable authenticated session across concurrent worker threads to eliminate repeated TLS handshakes.
     Defaults to max_dte=50, strike_range=25, and 1-hour cache TTL.
+    Returns clean structured batch dictionaries.
     """
     clean_tickers = [t.strip().upper() for t in tickers if t.strip()]
     if not clean_tickers:
         return {}
 
+    shared_session = get_shared_session(force_refresh=force_refresh)
+
     def _fetch_single(symbol: str) -> tuple[str, Optional[GexDexTickerMetrics]]:
         try:
-            raw_data = fetch_raw_data_for_ticker(symbol, max_dte=max_dte, strike_range=strike_range, force_refresh=force_refresh)
+            raw_data = fetch_raw_data_for_ticker(
+                symbol,
+                max_dte=max_dte,
+                strike_range=strike_range,
+                force_refresh=force_refresh,
+                session=shared_session
+            )
             if raw_data:
                 metrics = calculate_metrics_from_raw(symbol, raw_data)
                 return symbol, metrics
@@ -393,7 +458,13 @@ def get_gexdex_data(
                 except Exception as ex:
                     logging.error(f"Thread execution error for ticker {future_to_sym[future]}: {ex}")
 
-    return results
+    # Preserve input ordering in returned batch dictionary
+    ordered_results: Dict[str, GexDexTickerMetrics] = {}
+    for sym in clean_tickers:
+        if sym in results:
+            ordered_results[sym] = results[sym]
+
+    return ordered_results
 
 
 def prewarm_chart_cache(

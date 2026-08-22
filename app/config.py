@@ -1,4 +1,5 @@
 import os
+import secrets
 from typing import Optional
 from fastapi import Security, HTTPException, status, Query
 from fastapi.security import APIKeyHeader
@@ -16,12 +17,22 @@ def get_api_key(
 ) -> str:
     """
     Validates X-API-Key header or api_key query parameter against API_KEY environment variable.
+    Enforces fail-closed behavior if API_KEY is unset or empty, and uses constant-time comparison.
     """
+    expected_api_key = os.getenv("API_KEY")
+    if not expected_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server authentication misconfigured: API_KEY is missing.",
+        )
     api_key = api_key_header_val or api_key_query
-    expected_api_key = os.getenv("API_KEY", "YOUR_SECRET_API_KEY_HERE")
-    if not api_key or api_key != expected_api_key:
+    if not api_key or not secrets.compare_digest(api_key, expected_api_key):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing X-API-Key header or api_key query parameter",
         )
     return api_key
+
+
+verify_api_key = get_api_key
+
