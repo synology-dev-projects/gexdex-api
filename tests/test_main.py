@@ -1,6 +1,11 @@
+import os
 import pytest
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
+
+TEST_API_KEY = "YOUR_SECRET_API_KEY_HERE"
+os.environ["API_KEY"] = TEST_API_KEY
+
 from app.main import app
 from app.services.gexdex_service import (
     calculate_metrics_from_raw,
@@ -10,7 +15,6 @@ from app.services.gexdex_service import (
 )
 
 client = TestClient(app)
-TEST_API_KEY = "YOUR_SECRET_API_KEY_HERE"
 
 MOCK_RAW_PAYLOAD = {
     "ticker": "AAPL",
@@ -84,6 +88,28 @@ def test_gexdex_unauthorized_with_wrong_key():
         headers={"X-API-Key": "INVALID_KEY_123"}
     )
     assert response.status_code == 401
+
+
+def test_gexdex_server_misconfigured_missing_key(monkeypatch):
+    """Verifies that missing API_KEY environment variable fails closed with HTTP 500."""
+    monkeypatch.delenv("API_KEY", raising=False)
+    response = client.get(
+        "/api/v1/gexdex?tickers=AAPL",
+        headers={"X-API-Key": TEST_API_KEY}
+    )
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Server authentication misconfigured: API_KEY is missing."
+
+
+def test_gexdex_server_misconfigured_empty_key(monkeypatch):
+    """Verifies that empty API_KEY environment variable fails closed with HTTP 500."""
+    monkeypatch.setenv("API_KEY", "")
+    response = client.get(
+        "/api/v1/gexdex?tickers=AAPL",
+        headers={"X-API-Key": TEST_API_KEY}
+    )
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Server authentication misconfigured: API_KEY is missing."
 
 
 def test_gexdex_success_single_ticker():

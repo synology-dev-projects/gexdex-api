@@ -1,9 +1,11 @@
 import base64
+import os
+import secrets
 from typing import Dict, Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Security, BackgroundTasks
 from fastapi.responses import Response, HTMLResponse
+from fastapi.security import APIKeyHeader
 
-from app.config import get_api_key
 from app.services.gexdex_service import (
     GexDexTickerMetrics,
     StrikeDistributionResponse,
@@ -13,6 +15,36 @@ from app.services.gexdex_service import (
     prewarm_chart_cache
 )
 
+API_KEY_NAME = "X-API-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+
+def verify_api_key(
+    api_key_header_val: Optional[str] = Security(api_key_header),
+    api_key_query: Optional[str] = Query(None, alias="api_key")
+) -> str:
+    """
+    Validates X-API-Key header or api_key query parameter against API_KEY environment variable.
+    Enforces fail-closed behavior if API_KEY is unset or empty, and uses constant-time comparison.
+    """
+    expected_api_key = os.getenv("API_KEY")
+    if not expected_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server authentication misconfigured: API_KEY is missing.",
+        )
+
+    provided_key = api_key_header_val or api_key_query
+    if not provided_key or not secrets.compare_digest(provided_key, expected_api_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing X-API-Key header or api_key query parameter",
+        )
+    return provided_key
+
+
+get_api_key = verify_api_key
+
 router = APIRouter()
 
 
@@ -20,7 +52,7 @@ router = APIRouter()
     "",
     response_model=Dict[str, GexDexTickerMetrics],
     summary="Get GEX/DEX Metrics for Tickers",
-    dependencies=[Depends(get_api_key)]
+    dependencies=[Depends(verify_api_key)]
 )
 def read_gexdex(
     tickers: str = Query(..., description="Comma-separated ticker list, e.g. AAPL,TSLA"),
@@ -47,7 +79,7 @@ def read_gexdex(
     "/strikes",
     response_model=StrikeDistributionResponse,
     summary="Get Granular Strike-Level GEX/DEX Distribution for Client-Side Charts",
-    dependencies=[Depends(get_api_key)]
+    dependencies=[Depends(verify_api_key)]
 )
 def read_gexdex_strikes(
     ticker: str = Query("AAPL", description="Stock ticker symbol (e.g. AAPL, TSLA, NVDA)"),
@@ -71,7 +103,7 @@ def read_gexdex_strikes(
 @router.get(
     "/chart",
     summary="Get GEX/DEX Exposure Chart Dashboard",
-    dependencies=[Depends(get_api_key)]
+    dependencies=[Depends(verify_api_key)]
 )
 def get_gexdex_chart(
     ticker: str = Query("AAPL", description="Stock ticker symbol (e.g. AAPL, TSLA, NVDA)"),
@@ -148,7 +180,7 @@ def get_gexdex_chart(
 @router.get(
     "/chart.png",
     summary="Get GEX/DEX Chart Image Binary",
-    dependencies=[Depends(get_api_key)]
+    dependencies=[Depends(verify_api_key)]
 )
 def get_gexdex_chart_png_direct(
     ticker: str = Query("AAPL", description="Stock ticker symbol"),
@@ -172,7 +204,7 @@ def get_gexdex_chart_png_direct(
 @router.get(
     "/assistant-summary",
     summary="Get Options Exposure Summary & Chart Image Link for AI Assistants",
-    dependencies=[Depends(get_api_key)]
+    dependencies=[Depends(verify_api_key)]
 )
 def get_gexdex_assistant_summary(
     background_tasks: BackgroundTasks,
