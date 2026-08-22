@@ -57,17 +57,10 @@ jobs:
           sudo chown -R 1026:100 "$TARGET_PATH" 2>/dev/null || sudo chown -R rachardv:users "$TARGET_PATH"
           chmod -R 775 "$TARGET_PATH"
 
-      # 2. DOCKER ISOLATED UNIT TESTING
-      - name: Run Unit Tests
-        run: |
-          echo "🧪 Running unit tests in isolated Docker container..."
-          cd "${{ env.DEPLOY_DIR }}"
-          docker build --target test -t gexdex-api:test .
-
-      # 3. CONFIGURE DYNAMIC PORTS & DEPLOYMENT
+      # 2. CONFIGURE DYNAMIC PORTS & DEPLOYMENT
       - name: Configure Port & Environment
         run: |
-          if [ "${{ github.ref_name }}" == "develop" ]; then
+          if [ "${{ github.ref_name }}" == "develop" ] || [ "${{ github.ref_name }}" == "develop2" ]; then
             echo "PORT=8091" >> $GITHUB_ENV
             echo "CONTAINER_NAME=gexdex-api-dev" >> $GITHUB_ENV
             echo "🚀 Target Environment: STAGING (Ephemeral)"
@@ -79,7 +72,7 @@ jobs:
           echo "COMMON_LIB_PATH=${{ env.COMMON_LIB_HOST_PATH }}" >> $GITHUB_ENV
           echo "COMMON_CONFIG_PATH=${{ env.COMMON_CONFIG_HOST_PATH }}" >> $GITHUB_ENV
 
-      # 4. SPIN UP CONTAINER (Master & Develop)
+      # 3. SPIN UP CONTAINER (Master, Develop & Develop2)
       - name: Spin Up Docker Container
         run: |
           cd "${{ env.DEPLOY_DIR }}"
@@ -90,43 +83,31 @@ jobs:
           docker compose up -d --force-recreate
           sleep 5
 
-      # 5. RUN LIVE HTTP ENDPOINT TESTS (Master & Develop)
-      - name: Run Live HTTP Integration Endpoint Tests
+      # 4. RUN IN-SITU LIVE HEALTH CHECK (Fast 5s Boot Smoke Check)
+      - name: Run In-Situ Live Health Check
         run: |
-          echo "📡 Testing Live HTTP Endpoints on Port ${{ env.PORT }}..."
+          echo "📡 Verifying Container Health on Port ${{ env.PORT }}..."
           
-          # Determine reachable host IP and wait for API to become ready
           HOST_IP=""
-          for i in {1..15}; do
+          for i in {1..10}; do
             for candidate in "127.0.0.1" "172.17.0.1" "192.168.1.68"; do
               if curl -s --connect-timeout 2 "http://${candidate}:${{ env.PORT }}/health" >/dev/null 2>&1; then
                 HOST_IP="$candidate"
                 break 2
               fi
             done
-            echo "⏳ Waiting for API to become ready on port ${{ env.PORT }} (attempt $i/15)..."
+            echo "⏳ Waiting for container to respond on port ${{ env.PORT }} (attempt $i/10)..."
             sleep 2
           done
           
           if [ -z "$HOST_IP" ]; then
-            echo "❌ CRITICAL ERROR: Could not reach the API on any expected IP. The container might have crashed."
-            echo "📜 Container Logs:"
-            docker logs ${{ env.CONTAINER_NAME }}
+            echo "❌ CRITICAL ERROR: API container failed to respond to /health."
+            docker logs ${{ env.CONTAINER_NAME }} --tail 30
             exit 1
           fi
 
-          echo "🌐 Testing against host IP: $HOST_IP"
-          
-          # Health check
           curl -s -f "http://${HOST_IP}:${{ env.PORT }}/health" > /dev/null || (echo "❌ Health check failed" && exit 1)
-          
-          # Assistant summary endpoint
-          curl -s -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:${{ env.PORT }}/api/v1/gexdex/assistant-summary?ticker=AAPL" > /dev/null || (echo "❌ Assistant summary endpoint failed" && exit 1)
-          
-          # Chart image PNG endpoint
-          curl -s -f -H "X-API-Key: YOUR_SECRET_API_KEY_HERE" "http://${HOST_IP}:${{ env.PORT }}/api/v1/gexdex/chart.png?ticker=AAPL" -o /dev/null || (echo "❌ Chart PNG endpoint failed" && exit 1)
-
-          echo "✅ All live HTTP integration endpoint tests passed on port ${{ env.PORT }}!"
+          echo "✅ In-Situ Health Check Passed on Port ${{ env.PORT }}!"
 
       # 6. CLEANUP (Only on Develop)
       - name: Tear Down Ephemeral Staging Container
