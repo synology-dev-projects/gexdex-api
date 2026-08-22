@@ -170,8 +170,10 @@ def calculate_metrics_from_raw(ticker: str, raw_data: dict) -> Optional[GexDexTi
 
             try:
                 exp_date = pd.to_datetime(row.get("expiration"))
-                dte = (exp_date.tz_localize('UTC') if exp_date.tz is None else exp_date - now_dt).days
-                if dte <= 7:
+                if exp_date.tzinfo is None:
+                    exp_date = exp_date.tz_localize(timezone.utc)
+                dte = (exp_date - now_dt).days
+                if 0 <= dte <= 7:
                     front_week_gex += abs_gex
             except Exception:
                 pass
