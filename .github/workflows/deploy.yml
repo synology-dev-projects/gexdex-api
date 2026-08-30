@@ -20,6 +20,12 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN }}
 
+      # 0.5 Pre-Flight Test Gate
+      - name: Run Pre-Flight Test Gate
+        run: |
+          echo "🧪 Running GEXDEX-API Pytest Suite..."
+          pytest tests/ -v
+
       # 1. SETUP & CODE SYNC
       - name: Sync Workspace & Configure Paths
         run: |
